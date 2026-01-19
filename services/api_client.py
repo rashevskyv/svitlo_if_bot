@@ -11,7 +11,7 @@ _LOGGER = logging.getLogger(__name__)
 # Додаємо шлях до папки svitlo_live
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(CURRENT_DIR)
-CONST_PATH = os.path.join(REPO_ROOT, "svitlo_live", "const.py")
+CONST_PATH = os.path.join(REPO_ROOT, "external", "svitlo_live", "custom_components", "svitlo_live", "const.py")
 
 def load_const_directly():
     """Завантажує константи безпосередньо з файлу, уникаючи імпорту __init__.py та HA залежностей."""
@@ -33,7 +33,7 @@ def load_const_directly():
     try:
         if not os.path.exists(CONST_PATH):
             # Спробуємо знайти в поточному каталозі (якщо запущено з кореня)
-            alt_path = os.path.join(os.getcwd(), "svitlo_live", "const.py")
+            alt_path = os.path.join(os.getcwd(), "external", "svitlo_live", "custom_components", "svitlo_live", "const.py")
             if os.path.exists(alt_path):
                 path = alt_path
             else:

@@ -14,15 +14,30 @@ The primary component of this repository is the Telegram bot that notifies users
 - ✅ **Easy setup** via Telegram interface.
 
 ### Installation
-1. Clone the repository.
-2. Install dependencies: `pip install -r requirements.txt`.
-3. Create a `.env` file based on `.env.example` and add your `BOT_TOKEN`.
-4. Run the bot: `python main.py`.
+1. Clone the repository with submodules:
+   ```bash
+   git clone --recursive https://github.com/chaichuk/svitlo_if_bot.git
+   ```
+   *If you already cloned it, run:*
+   ```bash
+   git submodule update --init --recursive
+   ```
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv venv
+   # On Windows:
+   .\venv\Scripts\activate
+   # On Linux/macOS:
+   source venv/bin/activate
+   ```
+3. Install dependencies: `pip install -r requirements.txt`.
+4. Create a `.env` file based on `.env.example` and add your `BOT_TOKEN`.
+5. Run the bot: `python main.py`.
 
 ---
 
-## 🏠 Home Assistant Integration (`svitlo_live/`)
-The core logic and HA integration are located in the `svitlo_live/` directory.
+## 🏠 Home Assistant Integration (`external/svitlo_live/`)
+The core logic and HA integration are located in the [svitlo_live](https://github.com/chaichuk/svitlo_live) repository, which is included here as a git submodule in the `external/svitlo_live/` directory.
 
 ### Features
 - ✅ Displays **current power status** (`On / Off`).
@@ -33,7 +48,7 @@ The core logic and HA integration are located in the `svitlo_live/` directory.
 ### Installation via HACS
 1. Add this repository as a **Custom Repository** in HACS.
 2. Download the integration.
-3. **Note:** Since the integration is now in a subdirectory, you may need to manually copy the `svitlo_live` folder to your `custom_components/` directory if HACS doesn't handle the subdirectory automatically.
+3. **Note:** Since the integration is in a submodule, you may need to manually copy the `external/svitlo_live/svitlo_live` folder to your `custom_components/` directory if HACS doesn't handle the structure automatically.
 
 ---
 

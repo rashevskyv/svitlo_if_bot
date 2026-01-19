@@ -1,0 +1,3 @@
+[submodule "external/svitlo_live"]
+	path = external/svitlo_live
+	url = https://github.com/chaichuk/svitlo_live
