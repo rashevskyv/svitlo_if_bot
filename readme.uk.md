@@ -16,7 +16,7 @@
 ### Встановлення
 1. Клонуйте репозиторій разом із субмодулями:
    ```bash
-   git clone --recursive https://github.com/chaichuk/svitlo_if_bot.git
+   git clone --recursive https://github.com/rashevskyv/svitlo_if_bot.git
    ```
    *Якщо ви вже клонували його, виконайте:*
    ```bash

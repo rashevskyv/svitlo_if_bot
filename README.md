@@ -16,7 +16,7 @@ The primary component of this repository is the Telegram bot that notifies users
 ### Installation
 1. Clone the repository with submodules:
    ```bash
-   git clone --recursive https://github.com/chaichuk/svitlo_if_bot.git
+   git clone --recursive https://github.com/rashevskyv/svitlo_if_bot.git
    ```
    *If you already cloned it, run:*
    ```bash
