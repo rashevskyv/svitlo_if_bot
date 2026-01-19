@@ -1,0 +1,340 @@
+import logging
+from aiogram import Router, F
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile, InputMediaPhoto
+from services.api_client import SvitloApiClient
+from database.db import add_or_update_user, get_user
+from services.image_generator import convert_api_to_half_list
+from datetime import datetime
+from typing import Any
+
+router = Router()
+api_client = SvitloApiClient()
+_LOGGER = logging.getLogger(__name__)
+
+def get_main_keyboard():
+    buttons = [
+        [KeyboardButton(text="📊 Поточний статус")],
+        [KeyboardButton(text="⚙️ Змінити налаштування")]
+    ]
+    return ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+
+class Registration(StatesGroup):
+    waiting_for_macro_region = State()
+    waiting_for_region = State()
+    waiting_for_queue = State()
+    waiting_for_settings_choice = State()
+    waiting_for_display_mode = State()
+
+# Ключові слова для групування областей (динамічно)
+MACRO_GROUPS_KEYWORDS = {
+    "Захід": ["Львів", "Франківськ", "Закарпат", "Тернопіль", "Хмельницьк", "Рівне", "Волин", "Чернівець"],
+    "Центр та Північ": ["Київ", "Житомир", "Вінницьк", "Черкас", "Чернігів", "Полтав", "Кіровоград", "Сум"],
+    "Південь": ["Одес", "Миколаїв", "Херсон", "Запорізьк"],
+    "Схід": ["Харків", "Дніпро", "Донецьк", "Луганськ"]
+}
+
+async def get_grouped_regions():
+    """Групує всі доступні області з api_client за макрорегіонами."""
+    all_regions = await api_client.get_regions()
+    grouped = {group: {} for group in MACRO_GROUPS_KEYWORDS}
+    grouped["Інші"] = {}
+    
+    for reg_id, reg_name in all_regions.items():
+        found = False
+        for group, keywords in MACRO_GROUPS_KEYWORDS.items():
+            if any(kw.lower() in reg_name.lower() for kw in keywords):
+                grouped[group][reg_id] = reg_name
+                found = True
+                break
+        if not found:
+            grouped["Інші"][reg_id] = reg_name
+            
+    # Видаляємо порожні групи
+    return {k: v for k, v in grouped.items() if v}
+
+@router.message(Command("start"))
+async def cmd_start(message: Message, state: FSMContext):
+    _LOGGER.info(f"User {message.from_user.id} started registration")
+    
+    grouped = await get_grouped_regions()
+    await state.update_data(grouped_regions=grouped)
+    
+    # Створюємо клавіатуру з макрорегіонами
+    buttons = [[KeyboardButton(text=name)] for name in grouped.keys()]
+    keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
+    
+    await message.answer(
+        "Привіт! Я бот для моніторингу світла.\n\n"
+        "Виберіть ваш регіон або **введіть назву вашого міста/області вручну** (наприклад, Калуш, Київ, Львів):", 
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await state.set_state(Registration.waiting_for_macro_region)
+
+@router.message(Registration.waiting_for_macro_region)
+async def process_macro_region(message: Message, state: FSMContext):
+    user_input = message.text
+    data = await state.get_data()
+    grouped = data.get("grouped_regions", {})
+    all_regions = await api_client.get_regions()
+    
+    # 1. Перевірка, чи це макрорегіон
+    if user_input in grouped:
+        filtered_regions = grouped[user_input]
+        await state.update_data(regions=all_regions, current_macro=user_input)
+        
+        buttons = [[KeyboardButton(text=name)] for name in filtered_regions.values()]
+        buttons.append([KeyboardButton(text="⬅️ Назад")])
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
+        
+        await message.answer(f"Вибрано: {user_input}. Тепер виберіть вашу область:", reply_markup=keyboard)
+        await state.set_state(Registration.waiting_for_region)
+        return
+
+    # 2. Спроба знайти регіон за назвою (ручне введення)
+    found_regions = {k: v for k, v in all_regions.items() if user_input.lower() in v.lower()}
+    
+    if len(found_regions) == 1:
+        # Знайдено рівно один збіг - вибираємо його
+        reg_id, reg_name = list(found_regions.items())[0]
+        await state.update_data(region_id=reg_id, region_name=reg_name, regions=all_regions)
+        await message.answer(f"Знайдено: {reg_name}. Тепер введіть номер вашої черги (наприклад, 4.2 або 5):", reply_markup=ReplyKeyboardRemove())
+        await state.set_state(Registration.waiting_for_queue)
+    elif len(found_regions) > 1:
+        # Знайдено декілька збігів - пропонуємо вибрати
+        buttons = [[KeyboardButton(text=name)] for name in found_regions.values()]
+        buttons.append([KeyboardButton(text="⬅️ Назад")])
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
+        await message.answer(f"Знайдено декілька варіантів за запитом '{user_input}'. Уточніть, будь ласка:", reply_markup=keyboard)
+        await state.update_data(regions=all_regions)
+        await state.set_state(Registration.waiting_for_region)
+    else:
+        await message.answer("На жаль, нічого не знайдено за таким запитом. Спробуйте вибрати зі списку або введіть іншу назву.")
+
+@router.message(Registration.waiting_for_region)
+async def process_region(message: Message, state: FSMContext):
+    user_input = message.text
+    
+    if user_input == "⬅️ Назад":
+        await cmd_start(message, state)
+        return
+
+    data = await state.get_data()
+    regions = data.get("regions", {})
+    
+    # Шукаємо ID регіону за назвою (точний збіг або підрядок)
+    region_id = next((k for k, v in regions.items() if v == user_input), None)
+    
+    if not region_id:
+        # Спробуємо знайти за підрядком, якщо точного збігу немає
+        found = {k: v for k, v in regions.items() if user_input.lower() in v.lower()}
+        if len(found) == 1:
+            region_id, user_input = list(found.items())[0]
+        else:
+            await message.answer("Будь ласка, виберіть область зі списку або введіть назву точніше.")
+            return
+    
+    await state.update_data(region_id=region_id, region_name=user_input)
+    _LOGGER.info(f"User {message.from_user.id} selected region: {user_input} ({region_id})")
+    
+    buttons = [[KeyboardButton(text="⬅️ Назад")]]
+    keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    
+    await message.answer(
+        f"Ви вибрали: {user_input}.\n"
+        f"Це охоплює всі міста та населені пункти цієї області.\n\n"
+        f"Тепер введіть номер вашої черги (наприклад, 4.2 або 5):", 
+        reply_markup=keyboard
+    )
+    await state.set_state(Registration.waiting_for_queue)
+
+@router.message(Registration.waiting_for_queue)
+async def process_queue(message: Message, state: FSMContext):
+    user_input = message.text.strip()
+    
+    if user_input == "⬅️ Назад":
+        data = await state.get_data()
+        # Повертаємось до вибору області в межах того ж макрорегіону
+        macro = data.get("current_macro")
+        if macro:
+            message.text = macro
+            await process_macro_region(message, state)
+        else:
+            await cmd_start(message, state)
+        return
+
+    queue_id = user_input
+    data = await state.get_data()
+    region_id = data.get("region_id")
+    
+    # Перевірка розкладу через API
+    schedule_data = await api_client.fetch_schedule(region_id, queue_id)
+    if not schedule_data:
+        await message.answer("Не вдалося знайти розклад для цієї черги. Перевірте правильність вводу та спробуйте ще раз.")
+        return
+    
+    # Зберігаємо користувача
+    await add_or_update_user(message.from_user.id, region_id, queue_id)
+    _LOGGER.info(f"User {message.from_user.id} registered with queue {queue_id} in region {region_id}")
+    
+    await message.answer(
+        f"Ви успішно зареєстровані! Область: {data['region_name']}, Черга: {queue_id}.\n"
+        "Ви можете змінити вигляд графіку в меню 'Змінити налаштування'.\n\n"
+        "Ось ваш поточний розклад:",
+        reply_markup=get_main_keyboard()
+    )
+    
+    # Відправляємо графік (за замовчуванням classic)
+    await send_schedule(message, message.from_user.id)
+    await state.clear()
+
+@router.message(F.text == "⚙️ Змінити налаштування")
+async def cmd_settings(message: Message, state: FSMContext):
+    await state.clear() # Очищуємо стан, якщо користувач натиснув кнопку меню
+    buttons = [
+        [KeyboardButton(text="🌍 Змінити регіон/чергу")],
+        [KeyboardButton(text="🎨 Змінити вигляд графіку")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    await message.answer("Що саме ви хочете змінити?", reply_markup=keyboard)
+    await state.set_state(Registration.waiting_for_settings_choice)
+
+@router.message(Registration.waiting_for_settings_choice)
+async def process_settings_choice(message: Message, state: FSMContext):
+    choice = message.text
+    
+    if choice == "🌍 Змінити регіон/чергу":
+        await cmd_start(message, state)
+    elif choice == "🎨 Змінити вигляд графіку":
+        buttons = [
+            [KeyboardButton(text="🕒 Коло (Доба)")],
+            [KeyboardButton(text="🔮 Коло (Прогноз)")],
+            [KeyboardButton(text="📝 Список")],
+            [KeyboardButton(text="⬅️ Назад")]
+        ]
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        
+        description = (
+            "🎨 **Оберіть режим відображення графіку:**\n\n"
+            "🕒 **Коло (Доба)**\n"
+            "• Класичний вигляд на 24 години (00-23).\n"
+            "• Зручно для планування всього дня.\n"
+            "• Перемикання між сьогодні/завтра.\n\n"
+            "🔮 **Коло (Прогноз)**\n"
+            "• Показує 24 години вперед від **зараз**.\n"
+            "• Стрілка показує поточний час.\n"
+            "• Сектори після 00:00 — це вже ранок завтра.\n\n"
+            "📝 **Список**\n"
+            "• Текстові картки з інтервалами.\n"
+            "• Тільки конкретний час відключень.\n"
+            "• Легко читати тривалість."
+        )
+        await message.answer(description, reply_markup=keyboard, parse_mode="Markdown")
+        await state.set_state(Registration.waiting_for_display_mode)
+    elif choice == "⬅️ Назад":
+        await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
+        await state.clear()
+    else:
+        await message.answer("Будь ласка, оберіть варіант з кнопок.")
+
+@router.message(Registration.waiting_for_display_mode)
+async def process_display_mode(message: Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await cmd_settings(message, state)
+        return
+
+    mode_map = {
+        "🕒 Коло (Доба)": "classic",
+        "🔮 Коло (Прогноз)": "dynamic",
+        "📝 Список": "list"
+    }
+    
+    user_mode = message.text
+    if user_mode not in mode_map:
+        await message.answer("Будь ласка, оберіть режим з кнопок.")
+        return
+        
+    db_mode = mode_map[user_mode]
+    from database.db import update_user_display_mode
+    await update_user_display_mode(message.from_user.id, db_mode)
+    
+    await message.answer(
+        f"Налаштування збережено! Режим: {user_mode}.",
+        reply_markup=get_main_keyboard()
+    )
+    
+    # Відправляємо оновлений графік
+    await send_schedule(message, message.from_user.id)
+    await state.clear()
+async def send_schedule(target: Any, tg_id: int):
+    """
+    Універсальна функція для відправки графіку.
+    target може бути Message або Bot.
+    """
+    from services.image_generator import generate_schedule_image, convert_api_to_half_list, get_next_event_info
+    from aiogram import Bot
+    from aiogram.types import Message
+    
+    user = await get_user(tg_id)
+    if not user: return
+    
+    # user: (tg_id, region_id, queue_id, hash, mode)
+    _, region_id, queue_id, _, mode = user
+    if not mode: mode = "classic"
+    
+    schedule_data = await api_client.fetch_schedule(region_id, queue_id)
+    if not schedule_data:
+        if isinstance(target, Message):
+            await target.answer("Не вдалося отримати розклад. Можливо, черга вказана невірно.")
+        return
+        
+    today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
+    tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
+    
+    images = generate_schedule_image(
+        today_half, tomorrow_half, datetime.now(), mode, queue_id
+    )
+
+    forecast_text = get_next_event_info(today_half, tomorrow_half, datetime.now())
+
+    media = []
+    for i, img_buf in enumerate(images):
+        photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{i}.png")
+        # Додаємо підпис тільки до першого фото в групі
+        caption = forecast_text if i == 0 else None
+        media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
+
+    if isinstance(target, Message):
+        if len(media) > 1:
+            await target.answer_media_group(media)
+            # Після медіагрупи відправляємо клавіатуру окремим повідомленням, якщо це потрібно
+            # Але зазвичай краще просто оновити поточне повідомлення або відправити нове з текстом
+            await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard())
+        else:
+            await target.answer_photo(
+                media[0].media,
+                caption=forecast_text,
+                reply_markup=get_main_keyboard(),
+                parse_mode="Markdown"
+            )
+    elif isinstance(target, Bot):
+        if len(media) > 1:
+            await target.send_media_group(tg_id, media)
+        else:
+            await target.send_photo(
+                tg_id,
+                media[0].media,
+                caption=forecast_text,
+                reply_markup=get_main_keyboard(),
+                parse_mode="Markdown"
+            )
+
+@router.message(F.text == "📊 Поточний статус")
+@router.message(Command("status"))
+async def cmd_status(message: Message, state: FSMContext):
+    await state.clear() # Очищуємо стан, якщо користувач натиснув кнопку меню
+    await send_schedule(message, message.from_user.id)
