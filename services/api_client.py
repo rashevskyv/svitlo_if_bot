@@ -69,23 +69,61 @@ else:
 class SvitloApiClient:
     def __init__(self, session: Optional[aiohttp.ClientSession] = None):
         self._session = session
+        self._cached_data = None
+        self._last_fetch_time = 0
+        self._cache_ttl = 60 # seconds
 
     async def fetch_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
         """
-        Отримує розклад для вказаної черги в будь-якій області.
-        Використовує URL та мапінг з svitlo_live.
+        Отримує розклад для вказаної черги. Використовує кеш, якщо він актуальний.
         """
+        now = time.time()
+        if not self._cached_data or (now - self._last_fetch_time) > self._cache_ttl:
+            _LOGGER.info(f"Cache miss or expired for {region}/{queue}. Refreshing...")
+            await self._refresh_cache()
+        else:
+            _LOGGER.info(f"Cache hit for {region}/{queue}")
+            
+        if not self._cached_data:
+            _LOGGER.error("No cached data available after refresh")
+            return None
+            
+        # Визначаємо правильний ключ регіону
+        api_region_key = API_REGION_MAP.get(region, region)
+        
+        regions_list = self._cached_data.get("regions", [])
+        region_obj = next((r for r in regions_list if r.get("cpu") == api_region_key), None)
+        
+        if not region_obj:
+            _LOGGER.error(f"Region '{api_region_key}' not found in API")
+            return None
+        
+        date_today = self._cached_data.get("date_today")
+        date_tomorrow = self._cached_data.get("date_tomorrow")
+        
+        schedule = (region_obj.get("schedule") or {}).get(queue) or {}
+        if not schedule:
+            _LOGGER.warning(f"No schedule found for queue {queue} in region {region}")
+            return None
+        
+        return {
+            "region": region,
+            "queue": queue,
+            "date_today": date_today,
+            "date_tomorrow": date_tomorrow,
+            "schedule": schedule,
+            "is_emergency": region_obj.get("emergency", False)
+        }
+
+    async def _refresh_cache(self):
+        """Завантажує повний JSON з API та оновлює кеш."""
         close_session = False
         if self._session is None:
             self._session = aiohttp.ClientSession()
             close_session = True
 
-        # Визначаємо правильний ключ регіону (як у coordinator.py)
-        api_region_key = API_REGION_MAP.get(region, region)
-        _LOGGER.info(f"Fetching schedule for region: {region} (API key: {api_region_key}), queue: {queue}")
-        
+        _LOGGER.info("Refreshing global API cache...")
         try:
-            # Додаємо мітку часу та заголовки для обходу кешу (cache busting)
             url_with_cache_bust = f"{DTEK_API_URL}?t={int(time.time())}"
             headers = {
                 "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -95,42 +133,20 @@ class SvitloApiClient:
             async with self._session.get(url_with_cache_bust, headers=headers, timeout=30) as resp:
                 if resp.status != 200:
                     _LOGGER.error(f"HTTP {resp.status} for {DTEK_API_URL}")
-                    return None
+                    return
                 
                 raw_response = await resp.json(content_type=None)
                 body_str = raw_response.get("body")
                 if not body_str:
                     _LOGGER.error("API response missing 'body'")
-                    return None
+                    return
                 
-                data = json.loads(body_str)
-                regions_list = data.get("regions", [])
-                region_obj = next((r for r in regions_list if r.get("cpu") == api_region_key), None)
-                
-                if not region_obj:
-                    _LOGGER.error(f"Region '{api_region_key}' not found in API")
-                    return None
-                
-                date_today = data.get("date_today")
-                date_tomorrow = data.get("date_tomorrow")
-                
-                schedule = (region_obj.get("schedule") or {}).get(queue) or {}
-                if not schedule:
-                    _LOGGER.warning(f"No schedule found for queue {queue} in region {region}")
-                    return None
-                
-                return {
-                    "region": region,
-                    "queue": queue,
-                    "date_today": date_today,
-                    "date_tomorrow": date_tomorrow,
-                    "schedule": schedule,
-                    "is_emergency": region_obj.get("emergency", False)
-                }
+                self._cached_data = json.loads(body_str)
+                self._last_fetch_time = time.time()
+                _LOGGER.info("Global API cache refreshed successfully")
 
         except Exception as e:
-            _LOGGER.error(f"Error fetching schedule: {e}")
-            return None
+            _LOGGER.error(f"Error refreshing cache: {e}")
         finally:
             if close_session:
                 await self._session.close()

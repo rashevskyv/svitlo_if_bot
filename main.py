@@ -103,10 +103,18 @@ async def check_updates():
             
             try:
                 await bot.send_message(tg_id, "🔔 Розклад оновився!")
-                # send_schedule вже оновлює хеш у базі
                 await send_schedule(bot, tg_id)
             except Exception as e:
-                _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
+                err_msg = str(e)
+                if "Forbidden: bot was blocked by the user" in err_msg or "chat not found" in err_msg:
+                    _LOGGER.warning(f"User {tg_id} blocked the bot or chat not found. Removing from DB.")
+                    from database.db import DB_PATH
+                    import aiosqlite
+                    async with aiosqlite.connect(DB_PATH) as db:
+                        await db.execute("DELETE FROM users WHERE telegram_id = ?", (tg_id,))
+                        await db.commit()
+                else:
+                    _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
 
 async def main():
     global api_client, session
