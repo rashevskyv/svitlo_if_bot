@@ -1,4 +1,6 @@
 import logging
+import re
+import json
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -8,7 +10,7 @@ from services.api_client import SvitloApiClient
 from database.db import add_or_update_user, get_user
 from services.image_generator import convert_api_to_half_list
 from datetime import datetime
-from typing import Any
+from typing import List, Dict, Any
 
 router = Router()
 api_client = SvitloApiClient()
@@ -101,7 +103,11 @@ async def process_macro_region(message: Message, state: FSMContext):
         # Знайдено рівно один збіг - вибираємо його
         reg_id, reg_name = list(found_regions.items())[0]
         await state.update_data(region_id=reg_id, region_name=reg_name, regions=all_regions)
-        await message.answer(f"Знайдено: {reg_name}. Тепер введіть номер вашої черги (наприклад, 4.2 або 5):", reply_markup=ReplyKeyboardRemove())
+        await message.answer(f"Знайдено: {reg_name}. Тепер введіть номер вашої черги (наприклад, 4.2 або 5):\n\n"
+                             "Можна вказати декілька черг через кому та дати їм назви, наприклад:\n"
+                             "`4 (Дім), 5.2 (Робота)`", 
+                             reply_markup=ReplyKeyboardRemove(),
+                             parse_mode="Markdown")
         await state.set_state(Registration.waiting_for_queue)
     elif len(found_regions) > 1:
         # Знайдено декілька збігів - пропонуємо вибрати
@@ -146,10 +152,32 @@ async def process_region(message: Message, state: FSMContext):
     await message.answer(
         f"Ви вибрали: {user_input}.\n"
         f"Це охоплює всі міста та населені пункти цієї області.\n\n"
-        f"Тепер введіть номер вашої черги (наприклад, 4.2 або 5):", 
-        reply_markup=keyboard
+        f"Тепер введіть номер вашої черги (наприклад, 4.2 або 5):\n\n"
+        "Можна вказати декілька черг через кому та дати їм назви, наприклад:\n"
+        "`4 (Дім), 5.2 (Робота)`", 
+        reply_markup=keyboard,
+        parse_mode="Markdown"
     )
     await state.set_state(Registration.waiting_for_queue)
+
+def parse_queues(input_str: str) -> List[Dict[str, str]]:
+    """
+    Parses input string like "4, 5.2 (Work), 6 (Home)" into a list of dicts.
+    """
+    # Split by comma
+    parts = [p.strip() for p in input_str.split(",")]
+    result = []
+    for part in parts:
+        # Match "queue (alias)" or just "queue"
+        match = re.match(r"^([\d.]+)\s*(?:\(([^)]+)\))?$", part)
+        if match:
+            q_id = match.group(1)
+            alias = match.group(2) or q_id
+            result.append({"id": q_id, "alias": alias})
+        else:
+            # Fallback for simple strings if regex fails
+            result.append({"id": part, "alias": part})
+    return result
 
 @router.message(Registration.waiting_for_queue)
 async def process_queue(message: Message, state: FSMContext):
@@ -166,22 +194,28 @@ async def process_queue(message: Message, state: FSMContext):
             await cmd_start(message, state)
         return
 
-    queue_id = user_input
+    queue_data = parse_queues(user_input)
     data = await state.get_data()
     region_id = data.get("region_id")
     
-    # Перевірка розкладу через API
-    schedule_data = await api_client.fetch_schedule(region_id, queue_id)
-    if not schedule_data:
-        await message.answer("Не вдалося знайти розклад для цієї черги. Перевірте правильність вводу та спробуйте ще раз.")
+    # Перевірка хоча б однієї черги через API
+    valid_queues = []
+    for q in queue_data:
+        schedule_data = await api_client.fetch_schedule(region_id, q["id"])
+        if schedule_data:
+            valid_queues.append(q)
+    
+    if not valid_queues:
+        await message.answer("Не вдалося знайти розклад для жодної з вказаних черг. Перевірте правильність вводу та спробуйте ще раз.")
         return
     
     # Зберігаємо користувача
-    await add_or_update_user(message.from_user.id, region_id, queue_id)
-    _LOGGER.info(f"User {message.from_user.id} registered with queue {queue_id} in region {region_id}")
+    await add_or_update_user(message.from_user.id, region_id, valid_queues)
+    _LOGGER.info(f"User {message.from_user.id} registered with queues {valid_queues} in region {region_id}")
     
+    queues_str = ", ".join([f"{q['id']} ({q['alias']})" if q['id'] != q['alias'] else q['id'] for q in valid_queues])
     await message.answer(
-        f"Ви успішно зареєстровані! Область: {data['region_name']}, Черга: {queue_id}.\n"
+        f"Ви успішно зареєстровані! Область: {data['region_name']}, Черги: {queues_str}.\n"
         "Ви можете змінити вигляд графіку в меню 'Змінити налаштування'.\n\n"
         "Ось ваш поточний розклад:",
         reply_markup=get_main_keyboard()
@@ -270,6 +304,7 @@ async def process_display_mode(message: Message, state: FSMContext):
     # Відправляємо оновлений графік
     await send_schedule(message, message.from_user.id)
     await state.clear()
+
 async def send_schedule(target: Any, tg_id: int):
     """
     Універсальна функція для відправки графіку.
@@ -278,65 +313,82 @@ async def send_schedule(target: Any, tg_id: int):
     from services.image_generator import generate_schedule_image, convert_api_to_half_list, get_next_event_info
     from aiogram import Bot
     from aiogram.types import Message
+    import hashlib
+    import json
+    from database.db import update_user_hash
     
     user = await get_user(tg_id)
     if not user: return
     
-    # user: (tg_id, region_id, queue_id, hash, mode)
-    _, region_id, queue_id, _, mode = user
+    # user: (tg_id, region_id, queue_id_json, hash, mode)
+    _, region_id, queue_id_json, _, mode = user
     if not mode: mode = "classic"
     
-    schedule_data = await api_client.fetch_schedule(region_id, queue_id)
-    if not schedule_data:
-        if isinstance(target, Message):
-            await target.answer("Не вдалося отримати розклад. Можливо, черга вказана невірно.")
-        return
-        
-    today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
-    tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
+    try:
+        queues = json.loads(queue_id_json)
+    except:
+        # Fallback for old data
+        queues = [{"id": queue_id_json, "alias": queue_id_json}]
     
-    # Оновлюємо хеш користувача, щоб ручна перевірка рахувалася як оновлення
-    import hashlib
-    import json
-    from database.db import update_user_hash
-    sched_str = json.dumps(schedule_data["schedule"], sort_keys=True)
+    media = []
+    all_schedules = {}
+    
+    for q in queues:
+        schedule_data = await api_client.fetch_schedule(region_id, q["id"])
+        if not schedule_data:
+            continue
+            
+        all_schedules[q["id"]] = schedule_data["schedule"]
+        
+        today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
+        tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
+        
+        images = generate_schedule_image(
+            today_half, tomorrow_half, datetime.now(), mode, q["alias"]
+        )
+
+        forecast_text = get_next_event_info(today_half, tomorrow_half, datetime.now())
+        
+        for i, img_buf in enumerate(images):
+            photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{q['id']}_{i}.png")
+            # Додаємо підпис тільки до першого фото кожної черги
+            # Якщо черг декілька, можливо краще об'єднати прогнози?
+            # Поки що додаємо прогноз до першого фото кожної черги
+            caption = f"📍 **{q['alias']}**\n{forecast_text}" if i == 0 else None
+            media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
+
+    if not media:
+        if isinstance(target, Message):
+            await target.answer("Не вдалося отримати розклад для жодної з ваших черг.")
+        return
+
+    # Оновлюємо хеш користувача (об'єднаний хеш всіх розкладів)
+    sched_str = json.dumps(all_schedules, sort_keys=True)
     new_hash = hashlib.md5(sched_str.encode()).hexdigest()
     await update_user_hash(tg_id, new_hash)
 
-    images = generate_schedule_image(
-        today_half, tomorrow_half, datetime.now(), mode, queue_id
-    )
-
-    forecast_text = get_next_event_info(today_half, tomorrow_half, datetime.now())
-
-    media = []
-    for i, img_buf in enumerate(images):
-        photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{i}.png")
-        # Додаємо підпис тільки до першого фото в групі
-        caption = forecast_text if i == 0 else None
-        media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
-
     if isinstance(target, Message):
         if len(media) > 1:
-            await target.answer_media_group(media)
-            # Після медіагрупи відправляємо клавіатуру окремим повідомленням, якщо це потрібно
-            # Але зазвичай краще просто оновити поточне повідомлення або відправити нове з текстом
+            # Aiogram has a limit of 10 items per media group
+            for i in range(0, len(media), 10):
+                await target.answer_media_group(media[i:i+10])
             await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard())
         else:
             await target.answer_photo(
                 media[0].media,
-                caption=forecast_text,
+                caption=media[0].caption,
                 reply_markup=get_main_keyboard(),
                 parse_mode="Markdown"
             )
     elif isinstance(target, Bot):
         if len(media) > 1:
-            await target.send_media_group(tg_id, media)
+            for i in range(0, len(media), 10):
+                await target.send_media_group(tg_id, media[i:i+10])
         else:
             await target.send_photo(
                 tg_id,
                 media[0].media,
-                caption=forecast_text,
+                caption=media[0].caption,
                 reply_markup=get_main_keyboard(),
                 parse_mode="Markdown"
             )

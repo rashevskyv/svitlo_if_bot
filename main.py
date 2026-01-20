@@ -58,28 +58,46 @@ async def check_updates():
     cache = {}
     
     for user in users:
-        # user: (tg_id, region_id, queue_id, last_hash, mode)
-        tg_id, region_id, queue_id, last_hash, mode = user
+        # user: (tg_id, region_id, queue_id_json, last_hash, mode)
+        tg_id, region_id, queue_id_json, last_hash, mode = user
         
-        cache_key = (region_id, queue_id)
-        if cache_key not in cache:
-            schedule_data = await api_client.fetch_schedule(region_id, queue_id)
-            if schedule_data:
-                # Створюємо хеш розкладу
-                sched_str = json.dumps(schedule_data["schedule"], sort_keys=True)
-                new_hash = hashlib.md5(sched_str.encode()).hexdigest()
-                cache[cache_key] = (schedule_data, new_hash)
-            else:
-                continue
+        try:
+            queues = json.loads(queue_id_json)
+        except:
+            # Fallback for old data
+            queues = [{"id": queue_id_json, "alias": queue_id_json}]
         
-        schedule_data, new_hash = cache[cache_key]
+        user_schedules = {}
+        skip_user = False
+        
+        for q in queues:
+            q_id = q["id"]
+            cache_key = (region_id, q_id)
+            if cache_key not in cache:
+                schedule_data = await api_client.fetch_schedule(region_id, q_id)
+                if schedule_data:
+                    cache[cache_key] = schedule_data
+                else:
+                    # If any queue fails, we might want to skip or continue with others
+                    # For now, let's just skip this queue
+                    continue
+            
+            if cache_key in cache:
+                user_schedules[q_id] = cache[cache_key]["schedule"]
+        
+        if not user_schedules:
+            continue
+            
+        # Створюємо хеш всіх розкладів користувача
+        sched_str = json.dumps(user_schedules, sort_keys=True)
+        new_hash = hashlib.md5(sched_str.encode()).hexdigest()
         
         if new_hash != last_hash:
-            _LOGGER.info(f"Schedule changed for user {tg_id} (Queue {queue_id})")
+            _LOGGER.info(f"Schedule changed for user {tg_id}")
             
             try:
                 await bot.send_message(tg_id, "🔔 Розклад оновився!")
-                # send_schedule вже оновлює хеш у базі, тому тут update_user_hash не потрібен
+                # send_schedule вже оновлює хеш у базі
                 await send_schedule(bot, tg_id)
             except Exception as e:
                 _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
