@@ -295,6 +295,14 @@ async def send_schedule(target: Any, tg_id: int):
     today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
     tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
     
+    # Оновлюємо хеш користувача, щоб ручна перевірка рахувалася як оновлення
+    import hashlib
+    import json
+    from database.db import update_user_hash
+    sched_str = json.dumps(schedule_data["schedule"], sort_keys=True)
+    new_hash = hashlib.md5(sched_str.encode()).hexdigest()
+    await update_user_hash(tg_id, new_hash)
+
     images = generate_schedule_image(
         today_half, tomorrow_half, datetime.now(), mode, queue_id
     )

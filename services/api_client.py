@@ -85,9 +85,14 @@ class SvitloApiClient:
         _LOGGER.info(f"Fetching schedule for region: {region} (API key: {api_region_key}), queue: {queue}")
         
         try:
-            # Додаємо мітку часу для обходу кешу (cache busting)
+            # Додаємо мітку часу та заголовки для обходу кешу (cache busting)
             url_with_cache_bust = f"{DTEK_API_URL}?t={int(time.time())}"
-            async with self._session.get(url_with_cache_bust, timeout=30) as resp:
+            headers = {
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Pragma": "no-cache",
+                "Expires": "0"
+            }
+            async with self._session.get(url_with_cache_bust, headers=headers, timeout=30) as resp:
                 if resp.status != 200:
                     _LOGGER.error(f"HTTP {resp.status} for {DTEK_API_URL}")
                     return None
