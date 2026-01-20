@@ -1,6 +1,9 @@
 @echo off
 setlocal
 
+echo Updating repository and submodules...
+git pull --recurse-submodules
+
 if not exist venv (
     echo Creating virtual environment...
     python -m venv venv

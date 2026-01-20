@@ -1,5 +1,8 @@
 #!/bin/bash
 
+echo "Updating repository and submodules..."
+git pull --recurse-submodules
+
 if [ ! -d "venv" ]; then
     echo "Creating virtual environment..."
     python3 -m venv venv
