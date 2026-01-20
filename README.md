@@ -13,26 +13,15 @@ The primary component of this repository is the Telegram bot that notifies users
 - ✅ **Multi-region support** (Kyiv, Dnipro, Odesa, Lviv, and more).
 - ✅ **Easy setup** via Telegram interface.
 
-### Installation
+### Installation & Running
 1. Clone the repository with submodules:
    ```bash
    git clone --recursive https://github.com/rashevskyv/svitlo_if_bot.git
    ```
-   *If you already cloned it, run:*
-   ```bash
-   git submodule update --init --recursive
-   ```
-2. Create and activate a virtual environment:
-   ```bash
-   python -m venv venv
-   # On Windows:
-   .\venv\Scripts\activate
-   # On Linux/macOS:
-   source venv/bin/activate
-   ```
-3. Install dependencies: `pip install -r requirements.txt`.
-4. Create a `.env` file based on `.env.example` and add your `BOT_TOKEN`.
-5. Run the bot: `python main.py`.
+2. Create a `.env` file based on `.env.example` and add your `BOT_TOKEN`.
+3. Run the bot:
+   - **Windows:** Double-click `run.bat` or run `.\run.bat` in terminal.
+   - **Linux:** Run `./run.sh`.
 
 ---
 

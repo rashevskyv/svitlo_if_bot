@@ -13,26 +13,15 @@
 - ✅ **Підтримка багатьох регіонів** (Київ, Дніпро, Одеса, Львів та інші).
 - ✅ **Просте налаштування** через інтерфейс Telegram.
 
-### Встановлення
+### Встановлення та запуск
 1. Клонуйте репозиторій разом із субмодулями:
    ```bash
    git clone --recursive https://github.com/rashevskyv/svitlo_if_bot.git
    ```
-   *Якщо ви вже клонували його, виконайте:*
-   ```bash
-   git submodule update --init --recursive
-   ```
-2. Створіть та активуйте віртуальне середовище:
-   ```bash
-   python -m venv venv
-   # Для Windows:
-   .\venv\Scripts\activate
-   # Для Linux/macOS:
-   source venv/bin/activate
-   ```
-3. Встановіть залежності: `pip install -r requirements.txt`.
-4. Створіть файл `.env` на основі `.env.example` та додайте ваш `BOT_TOKEN`.
-5. Запустіть бота: `python main.py`.
+2. Створіть файл `.env` на основі `.env.example` та додайте свій `BOT_TOKEN`.
+3. Запустіть бота:
+   - **Windows:** Двічі клацніть на `run.bat` або запустіть `.\run.bat` у терміналі.
+   - **Linux:** Запустіть `./run.sh`.
 
 ---
 
