@@ -325,8 +325,13 @@ async def send_schedule(target: Any, tg_id: int):
     import json
     from database.db import update_user_hash
     
+    _LOGGER.info(f"Attempting to send schedule for user {tg_id}")
     user = await get_user(tg_id)
-    if not user: return
+    if not user:
+        _LOGGER.warning(f"User {tg_id} not found in database")
+        if isinstance(target, Message):
+            await target.answer("Ви ще не зареєстровані. Будь ласка, скористайтеся командою /start")
+        return
     
     # user: (tg_id, region_id, queue_id_json, hash, mode)
     _, region_id, queue_id_json, _, mode = user
@@ -418,5 +423,6 @@ async def send_schedule(target: Any, tg_id: int):
 @router.message(F.text == "📊 Поточний статус")
 @router.message(Command("status"))
 async def cmd_status(message: Message, state: FSMContext):
+    _LOGGER.info(f"Button 'Поточний статус' clicked by user {message.from_user.id}")
     await state.clear() # Очищуємо стан, якщо користувач натиснув кнопку меню
     await send_schedule(message, message.from_user.id)
