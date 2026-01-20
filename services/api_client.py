@@ -158,4 +158,5 @@ class SvitloApiClient:
         code = day_schedule.get(time_key, 0)
         if code == 1: return "on"
         if code == 2: return "off"
+        if code == 3: return "possible"
         return "unknown"

@@ -8,6 +8,7 @@ from typing import List, Dict, Any, Optional
 # Кольори для графіків
 COLOR_ON = "#4CAF50"      # Green
 COLOR_OFF = "#D32F2F"     # Red (Darker)
+COLOR_POSSIBLE = "#81D4FA" # Light Blue
 COLOR_UNKNOWN = "#9E9E9E"  # Grey
 COLOR_TEXT_WHITE = "#FFFFFF"
 COLOR_ACCENT = "#FF6D00"   # Orange for headers
@@ -71,7 +72,12 @@ def _generate_circle_view(
         display_data = (day_data + ["unknown"] * 48)[:48]
         waiting_tomorrow = False
 
-    color_map = {"on": COLOR_ON, "off": COLOR_OFF, "unknown": COLOR_UNKNOWN}
+    color_map = {
+        "on": COLOR_ON, 
+        "off": COLOR_OFF, 
+        "possible": COLOR_POSSIBLE,
+        "unknown": COLOR_UNKNOWN
+    }
     colors = [color_map.get(s, COLOR_UNKNOWN) for s in display_data]
     sizes = [1] * 48
 
@@ -209,6 +215,7 @@ def convert_api_to_half_list(day_schedule: dict) -> List[str]:
             code = day_schedule.get(label, 0)
             if code == 1: res.append("on")
             elif code == 2: res.append("off")
+            elif code == 3: res.append("possible")
             else: res.append("unknown")
     return res
 
@@ -248,7 +255,12 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
         if next_event_idx >= 48:
             time_str += " (завтра)"
             
-        action = "відключення" if combined[next_event_idx] == "off" else "відновлення світла"
+        if combined[next_event_idx] == "off":
+            action = "відключення"
+        elif combined[next_event_idx] == "possible":
+            action = "можливе відключення"
+        else:
+            action = "відновлення світла"
         
         # Розрахунок тривалості наступного стану
         duration_idx = 0

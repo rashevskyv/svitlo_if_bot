@@ -93,7 +93,11 @@ async def check_updates():
         new_hash = hashlib.md5(sched_str.encode()).hexdigest()
         
         if new_hash != last_hash:
-            _LOGGER.info(f"Schedule changed for user {tg_id}")
+            dates = []
+            for q_id, sched in user_schedules.items():
+                dates.extend(sched.keys())
+            unique_dates = sorted(list(set(dates)))
+            _LOGGER.info(f"Schedule changed for user {tg_id}. Dates in schedule: {unique_dates}")
             
             try:
                 await bot.send_message(tg_id, "🔔 Розклад оновився!")
