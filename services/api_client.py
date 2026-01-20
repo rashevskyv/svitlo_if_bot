@@ -66,12 +66,25 @@ else:
     REGIONS = {"ivano-frankivska-oblast": "Івано-Франківська область"}
     API_REGION_MAP = {}
 
+_instance = None
+
 class SvitloApiClient:
+    def __new__(cls, *args, **kwargs):
+        global _instance
+        if _instance is None:
+            _instance = super(SvitloApiClient, cls).__new__(cls)
+            _instance._initialized = False
+        return _instance
+
     def __init__(self, session: Optional[aiohttp.ClientSession] = None, cache_ttl: int = 60):
+        if self._initialized:
+            if session: self._session = session
+            return
         self._session = session
         self._cached_data = None
         self._last_fetch_time = 0
         self._cache_ttl = cache_ttl # seconds
+        self._initialized = True
 
     async def fetch_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
         """
