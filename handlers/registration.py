@@ -334,6 +334,9 @@ async def send_schedule(target: Any, tg_id: int):
     
     try:
         queues = json.loads(queue_id_json)
+        if not isinstance(queues, list):
+            # If it's a single value (like 5.2), wrap it in the expected list format
+            queues = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
     except:
         # Fallback for old data
         queues = [{"id": queue_id_json, "alias": queue_id_json}]

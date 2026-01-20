@@ -77,7 +77,10 @@ async def get_users_by_queue(region_id: str, queue_id: str) -> List[int]:
             for tg_id, q_json in rows:
                 try:
                     queues = json.loads(q_json)
-                    if any(q.get("id") == queue_id for q in queues):
+                    if isinstance(queues, list) and any(q.get("id") == queue_id for q in queues):
+                        matching_users.append(tg_id)
+                    elif not isinstance(queues, list) and str(queues) == queue_id:
+                        # Handle case where json.loads returned a single value (e.g. float or int)
                         matching_users.append(tg_id)
                 except:
                     # Fallback for old data

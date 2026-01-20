@@ -63,6 +63,8 @@ async def check_updates():
         
         try:
             queues = json.loads(queue_id_json)
+            if not isinstance(queues, list):
+                queues = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
         except:
             # Fallback for old data
             queues = [{"id": queue_id_json, "alias": queue_id_json}]
