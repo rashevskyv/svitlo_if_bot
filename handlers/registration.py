@@ -200,10 +200,13 @@ async def process_queue(message: Message, state: FSMContext):
     
     # Перевірка хоча б однієї черги через API
     valid_queues = []
+    ignored_queues = []
     for q in queue_data:
         schedule_data = await api_client.fetch_schedule(region_id, q["id"])
         if schedule_data:
             valid_queues.append(q)
+        else:
+            ignored_queues.append(q["id"])
     
     if not valid_queues:
         await message.answer("Не вдалося знайти розклад для жодної з вказаних черг. Перевірте правильність вводу та спробуйте ще раз.")
@@ -214,11 +217,16 @@ async def process_queue(message: Message, state: FSMContext):
     _LOGGER.info(f"User {message.from_user.id} registered with queues {valid_queues} in region {region_id}")
     
     queues_str = ", ".join([f"{q['id']} ({q['alias']})" if q['id'] != q['alias'] else q['id'] for q in valid_queues])
+    msg = f"Ви успішно зареєстровані! Область: {data['region_name']}, Черги: {queues_str}."
+    
+    if ignored_queues:
+        msg += f"\n\n⚠️ **Наступні черги були ігноровані (не знайдено в API):** {', '.join(ignored_queues)}"
+        
     await message.answer(
-        f"Ви успішно зареєстровані! Область: {data['region_name']}, Черги: {queues_str}.\n"
-        "Ви можете змінити вигляд графіку в меню 'Змінити налаштування'.\n\n"
+        msg + "\n\nВи можете змінити вигляд графіку в меню 'Змінити налаштування'.\n\n"
         "Ось ваш поточний розклад:",
-        reply_markup=get_main_keyboard()
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown"
     )
     
     # Відправляємо графік (за замовчуванням classic)
@@ -340,11 +348,24 @@ async def send_schedule(target: Any, tg_id: int):
             
         all_schedules[q["id"]] = schedule_data["schedule"]
         
-        today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
-        tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
+        today_data = schedule_data["schedule"].get(schedule_data["date_today"], {})
+        tomorrow_data = schedule_data["schedule"].get(schedule_data["date_tomorrow"], {})
+        
+        today_half = convert_api_to_half_list(today_data)
+        tomorrow_half = convert_api_to_half_list(tomorrow_data)
+        
+        # Перевірка чи є відключення завтра (для classic та list)
+        has_tomorrow_outages = "off" in tomorrow_half
+        
+        # В режимі dynamic ми завжди показуємо 24 години вперед
+        # В інших режимах приховуємо завтра, якщо там немає відключень
+        if mode in ["classic", "list"] and not has_tomorrow_outages:
+            tomorrow_half_for_gen = []
+        else:
+            tomorrow_half_for_gen = tomorrow_half
         
         images = generate_schedule_image(
-            today_half, tomorrow_half, datetime.now(), mode, q["alias"]
+            today_half, tomorrow_half_for_gen, datetime.now(), mode, q["alias"]
         )
 
         forecast_text = get_next_event_info(today_half, tomorrow_half, datetime.now())
@@ -352,8 +373,6 @@ async def send_schedule(target: Any, tg_id: int):
         for i, img_buf in enumerate(images):
             photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{q['id']}_{i}.png")
             # Додаємо підпис тільки до першого фото кожної черги
-            # Якщо черг декілька, можливо краще об'єднати прогнози?
-            # Поки що додаємо прогноз до першого фото кожної черги
             caption = f"📍 **{q['alias']}**\n{forecast_text}" if i == 0 else None
             media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
 
