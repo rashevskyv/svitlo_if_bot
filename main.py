@@ -3,6 +3,7 @@ import logging
 import hashlib
 import json
 import os
+import aiohttp
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -11,7 +12,7 @@ from datetime import datetime
 
 from database.db import init_db, get_all_users, update_user_hash
 from services.api_client import SvitloApiClient
-from services.image_generator import convert_api_to_half_list
+from handlers.registration import send_schedule
 from handlers import registration
 
 # Налаштування логування
@@ -29,7 +30,7 @@ loaded = load_dotenv(env_path)
 _LOGGER.info(f"load_dotenv() result: {loaded}")
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHECK_INTERVAL_STR = os.getenv("CHECK_INTERVAL", "30")
+CHECK_INTERVAL_STR = os.getenv("CHECK_INTERVAL", "10")
 CHECK_INTERVAL = int(CHECK_INTERVAL_STR)
 
 if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
@@ -40,8 +41,11 @@ _LOGGER.info(f"Bot token loaded (starts with: {str(BOT_TOKEN)[:5]}...)")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
-api_client = SvitloApiClient()
 scheduler = AsyncIOScheduler()
+
+# Глобальні об'єкти, що ініціалізуються в main()
+api_client = None
+session = None
 
 async def check_updates():
     """
@@ -54,7 +58,8 @@ async def check_updates():
     cache = {}
     
     for user in users:
-        tg_id, region_id, queue_id, last_hash = user
+        # user: (tg_id, region_id, queue_id, last_hash, mode)
+        tg_id, region_id, queue_id, last_hash, mode = user
         
         cache_key = (region_id, queue_id)
         if cache_key not in cache:
@@ -74,16 +79,20 @@ async def check_updates():
             
             try:
                 await bot.send_message(tg_id, "🔔 Розклад оновився!")
-                # Використовуємо універсальну функцію з registration для відправки графіку
-                from handlers.registration import send_schedule
-                await send_schedule(bot, tg_id) # Передаємо bot замість message для фонових задач
-                await update_user_hash(tg_id, new_hash)
+                # send_schedule вже оновлює хеш у базі, тому тут update_user_hash не потрібен
+                await send_schedule(bot, tg_id)
             except Exception as e:
                 _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
 
 async def main():
+    global api_client, session
+    
     # Ініціалізація БД
     await init_db()
+    
+    # Ініціалізація мережевої сесії та клієнта
+    session = aiohttp.ClientSession()
+    api_client = SvitloApiClient(session=session)
     
     # Реєстрація роутерів
     dp.include_router(registration.router)
@@ -94,7 +103,10 @@ async def main():
     scheduler.start()
     
     _LOGGER.info("Starting bot polling...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await session.close()
 
 if __name__ == "__main__":
     try:
