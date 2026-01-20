@@ -134,6 +134,10 @@ async def main():
     scheduler.add_job(check_updates, "cron", minute=f"*/{CHECK_INTERVAL}")
     scheduler.start()
     
+    # Негайна перевірка при старті
+    _LOGGER.info("Performing initial update check on startup...")
+    await check_updates()
+    
     _LOGGER.info("Starting bot polling...")
     try:
         await dp.start_polling(bot)
