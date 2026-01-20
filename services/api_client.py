@@ -3,6 +3,7 @@ import json
 import logging
 import sys
 import os
+import time
 from datetime import datetime
 from typing import Any, Optional, Dict
 
@@ -84,7 +85,9 @@ class SvitloApiClient:
         _LOGGER.info(f"Fetching schedule for region: {region} (API key: {api_region_key}), queue: {queue}")
         
         try:
-            async with self._session.get(DTEK_API_URL, timeout=30) as resp:
+            # Додаємо мітку часу для обходу кешу (cache busting)
+            url_with_cache_bust = f"{DTEK_API_URL}?t={int(time.time())}"
+            async with self._session.get(url_with_cache_bust, timeout=30) as resp:
                 if resp.status != 200:
                     _LOGGER.error(f"HTTP {resp.status} for {DTEK_API_URL}")
                     return None

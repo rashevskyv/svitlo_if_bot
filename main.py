@@ -89,8 +89,8 @@ async def main():
     dp.include_router(registration.router)
     
     # Налаштування планувальника
-    _LOGGER.info(f"Starting scheduler with interval {CHECK_INTERVAL} minutes")
-    scheduler.add_job(check_updates, "interval", minutes=CHECK_INTERVAL)
+    _LOGGER.info(f"Starting scheduler with interval {CHECK_INTERVAL} minutes (aligned to absolute time)")
+    scheduler.add_job(check_updates, "cron", minute=f"*/{CHECK_INTERVAL}")
     scheduler.start()
     
     _LOGGER.info("Starting bot polling...")
