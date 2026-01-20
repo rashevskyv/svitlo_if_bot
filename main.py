@@ -124,7 +124,7 @@ async def main():
     
     # Ініціалізація мережевої сесії та клієнта
     session = aiohttp.ClientSession()
-    api_client = SvitloApiClient(session=session)
+    api_client = SvitloApiClient(session=session, cache_ttl=CHECK_INTERVAL * 60)
     
     # Реєстрація роутерів
     dp.include_router(registration.router)

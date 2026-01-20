@@ -67,11 +67,11 @@ else:
     API_REGION_MAP = {}
 
 class SvitloApiClient:
-    def __init__(self, session: Optional[aiohttp.ClientSession] = None):
+    def __init__(self, session: Optional[aiohttp.ClientSession] = None, cache_ttl: int = 60):
         self._session = session
         self._cached_data = None
         self._last_fetch_time = 0
-        self._cache_ttl = 60 # seconds
+        self._cache_ttl = cache_ttl # seconds
 
     async def fetch_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
         """
