@@ -55,6 +55,7 @@ async def check_updates():
     from database.db import get_users_by_region, get_unique_queues_by_region
     from services.image_cache import ImageCache
     from services.image_generator import generate_schedule_image, convert_api_to_half_list
+    from services.api_client import REGIONS, API_REGION_MAP
     
     _LOGGER.info("Checking for updates...")
     changed_region_cpus = await api_client._refresh_cache()
