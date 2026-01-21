@@ -462,6 +462,11 @@ async def send_schedule(target: Any, tg_id: int):
     except Exception as e:
         queues = [{"id": queue_id_json, "alias": queue_id_json}]
     
+    # Надсилаємо вступне повідомлення першим
+    if hasattr(target, "answer"):
+        from handlers.registration import get_main_keyboard
+        await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard())
+    
     all_schedules = {}
     img_cache = ImageCache()
     now_dt = datetime.now()
@@ -571,11 +576,6 @@ async def send_schedule(target: Any, tg_id: int):
         sched_str = json.dumps(all_schedules, sort_keys=True)
         new_hash = hashlib.md5(sched_str.encode()).hexdigest()
         await update_user_hash(tg_id, new_hash)
-        
-        # Додаємо клавіатуру в кінці, якщо це повідомлення
-        if hasattr(target, "answer"):
-            from handlers.registration import get_main_keyboard
-            await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard())
     else:
         if hasattr(target, "answer"):
             await target.answer("Не вдалося отримати розклад для жодної з ваших черг.")
