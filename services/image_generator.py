@@ -74,33 +74,37 @@ def _generate_circle_view(
         display_data = (day_data + ["unknown"] * 48)[:48]
         waiting_tomorrow = False
 
+    # Консолідуємо 48 півгодин у 24 години (беремо найгірший статус для години)
+    hourly_data = []
+    for i in range(0, 48, 2):
+        s1 = display_data[i]
+        s2 = display_data[i+1]
+        if s1 == "off" or s2 == "off":
+            hourly_data.append("off")
+        elif s1 == "possible" or s2 == "possible":
+            hourly_data.append("possible")
+        elif s1 == "unknown" or s2 == "unknown":
+            hourly_data.append("unknown")
+        else:
+            hourly_data.append("on")
+
     color_map = {
         "on": COLOR_ON, 
         "off": COLOR_OFF, 
         "possible": COLOR_POSSIBLE,
         "unknown": COLOR_UNKNOWN
     }
-    colors = [color_map.get(s, COLOR_UNKNOWN) for s in display_data]
-    sizes = [1] * 48
+    colors = [color_map.get(s, COLOR_UNKNOWN) for s in hourly_data]
+    sizes = [1] * 24
 
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(aspect="equal"))
     
-    # Малюємо кільце без внутрішніх ліній (спочатку суцільне)
+    # Малюємо кільце (24 сегменти з розділювачами)
     ax.pie(sizes, colors=colors, startangle=90, counterclock=False, 
-           wedgeprops=dict(width=0.4, edgecolor='none', linewidth=0))
+           wedgeprops=dict(width=0.4, edgecolor='w', linewidth=0.5))
 
-    # Додаємо розділювачі годин (24 лінії)
+    # Додаємо цифри годин (всі 24 години)
     for i in range(24):
-        angle = 90 - i * 15
-        r_in, r_out = 0.6, 1.0
-        x_in = r_in * np.cos(np.radians(angle))
-        y_in = r_in * np.sin(np.radians(angle))
-        x_out = r_out * np.cos(np.radians(angle))
-        y_out = r_out * np.sin(np.radians(angle))
-        ax.plot([x_in, x_out], [y_in, y_out], color='w', linewidth=0.5, zorder=3)
-
-    # Додаємо цифри годин (кожні 2 години для чистоти, як просив користувач "бачити 12")
-    for i in range(0, 24, 2):
         angle = 90 - (i * 15 + 7.5) 
         r = 0.8 
         x = r * np.cos(np.radians(angle))
