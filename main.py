@@ -96,10 +96,16 @@ async def check_updates():
             # Хеш розкладу для ключа кешу
             sched_hash = hashlib.md5(json.dumps(schedule_data["schedule"], sort_keys=True).encode()).hexdigest()
             
+            from services.image_generator import is_schedule_empty
+            tomorrow_is_empty = is_schedule_empty(tomorrow_half)
+
             for mode in ["classic", "list"]:
+                # Приховуємо завтра, якщо воно порожнє
+                tomorrow_half_for_gen = [] if tomorrow_is_empty else tomorrow_half
+                
                 # Для кешу генеруємо БЕЗ часової відмітки
                 images = generate_schedule_image(
-                    today_half, tomorrow_half, datetime.now(), mode, q_id, show_time_marker=False
+                    today_half, tomorrow_half_for_gen, datetime.now(), mode, q_id, show_time_marker=False
                 )
                 img_cache.set(region_id, q_id, mode, sched_hash, images)
 

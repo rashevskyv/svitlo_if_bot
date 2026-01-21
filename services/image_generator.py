@@ -229,6 +229,13 @@ def convert_api_to_half_list(day_schedule: dict) -> List[str]:
             else: res.append("unknown")
     return res
 
+def is_schedule_empty(half_list: List[str]) -> bool:
+    """
+    Перевіряє, чи є графік порожнім (тільки невідомі статуси).
+    """
+    if not half_list: return True
+    return all(s == "unknown" for s in half_list)
+
 def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current_dt: datetime) -> str:
     """
     Повертає текстовий прогноз та статистику на сьогодні та завтра.
