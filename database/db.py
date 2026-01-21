@@ -18,6 +18,8 @@ async def init_db():
         """)
         await db.commit()
 
+        await db.commit()
+
 async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[Dict[str, str]]):
     """
     queue_data: list of dicts like [{"id": "4", "alias": "Home"}, {"id": "5.2", "alias": "Work"}]
@@ -32,22 +34,6 @@ async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[
                 queue_id = excluded.queue_id
         """, (telegram_id, region_id, queue_json))
         
-        # Міграції для існуючих БД
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN display_mode TEXT DEFAULT 'classic'")
-        except aiosqlite.OperationalError:
-            pass
-            
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN reminder_minutes INTEGER DEFAULT 0")
-        except aiosqlite.OperationalError:
-            pass
-
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN last_reminder_at TEXT")
-        except aiosqlite.OperationalError:
-            pass
-            
         await db.commit()
 
 async def get_user(telegram_id: int) -> Optional[Tuple]:
