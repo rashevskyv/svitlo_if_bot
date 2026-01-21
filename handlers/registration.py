@@ -87,6 +87,29 @@ async def priority_status(message: Message, state: FSMContext):
 async def priority_settings(message: Message, state: FSMContext):
     await cmd_settings(message, state)
 
+async def show_regions_for_macro(message: Message, state: FSMContext, macro: str):
+    """Показує список областей для вибраного макрорегіону."""
+    data = await state.get_data()
+    grouped = data.get("grouped_regions", {})
+    if not grouped:
+        grouped = await get_grouped_regions()
+        await state.update_data(grouped_regions=grouped)
+
+    all_regions = await api_client.get_active_regions()
+    
+    if macro in grouped:
+        filtered_regions = grouped[macro]
+        await state.update_data(regions=all_regions, current_macro=macro)
+        
+        buttons = [[KeyboardButton(text=name)] for name in filtered_regions.values()]
+        buttons.append([KeyboardButton(text="⬅️ Назад")])
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
+        
+        await message.answer(f"Вибрано: {macro}. Тепер виберіть вашу область:", reply_markup=keyboard)
+        await state.set_state(Registration.waiting_for_region)
+        return True
+    return False
+
 @router.message(Registration.waiting_for_macro_region)
 async def process_macro_region(message: Message, state: FSMContext):
     user_input = message.text
@@ -105,16 +128,7 @@ async def process_macro_region(message: Message, state: FSMContext):
     all_regions = await api_client.get_active_regions()
     
     # 1. Перевірка, чи це макрорегіон
-    if user_input in grouped:
-        filtered_regions = grouped[user_input]
-        await state.update_data(regions=all_regions, current_macro=user_input)
-        
-        buttons = [[KeyboardButton(text=name)] for name in filtered_regions.values()]
-        buttons.append([KeyboardButton(text="⬅️ Назад")])
-        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True, one_time_keyboard=True)
-        
-        await message.answer(f"Вибрано: {user_input}. Тепер виберіть вашу область:", reply_markup=keyboard)
-        await state.set_state(Registration.waiting_for_region)
+    if await show_regions_for_macro(message, state, user_input):
         return
 
     # 2. Спроба знайти регіон за назвою (ручне введення)
@@ -216,8 +230,7 @@ async def process_queue(message: Message, state: FSMContext):
         # Повертаємось до вибору області в межах того ж макрорегіону
         macro = data.get("current_macro")
         if macro:
-            message.text = macro
-            await process_macro_region(message, state)
+            await show_regions_for_macro(message, state, macro)
         else:
             await cmd_start(message, state)
         return
