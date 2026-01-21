@@ -258,26 +258,37 @@ async def process_queue(message: Message, state: FSMContext):
         )
         return
     
-    # Зберігаємо користувача
+    # Зберігаємо користувача (за замовчуванням classic)
     await add_or_update_user(message.from_user.id, region_id, valid_queues)
     _LOGGER.info(f"User {message.from_user.id} registered with queues {valid_queues} in region {region_id}")
     
     queues_str = ", ".join([f"{q['id']} ({q['alias']})" if q['id'] != q['alias'] else q['id'] for q in valid_queues])
-    msg = f"Ви успішно зареєстровані! Область: {data['region_name']}, Черги: {queues_str}."
     
-    if ignored_queues:
-        msg += f"\n\n⚠️ **Наступні черги були ігноровані (не знайдено в API):** {', '.join(ignored_queues)}"
-        
-    await message.answer(
-        msg + "\n\nВи можете змінити вигляд графіку в меню 'Змінити налаштування'.\n\n"
-        "Ось ваш поточний розклад:",
-        reply_markup=get_main_keyboard(),
-        parse_mode="Markdown"
+    # Зберігаємо дані для фінального повідомлення
+    await state.update_data(
+        reg_queues_str=queues_str,
+        is_registration=True
     )
     
-    # Відправляємо графік (за замовчуванням classic)
-    await send_schedule(message, message.from_user.id)
-    await state.clear()
+    # Кнопки вибору режиму
+    buttons = [
+        [KeyboardButton(text="🕒 Коло (Доба)"), KeyboardButton(text="🔮 Коло (Прогноз)")],
+        [KeyboardButton(text="📝 Список")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    
+    await message.answer(
+        f"✅ Область та черги збережено!\n\n"
+        "Тепер оберіть **режим відображення** графіку:\n\n"
+        "• **🕒 Коло (Доба)** — класичне кільце на сьогодні. (За замовчуванням)\n"
+        "• **🔮 Коло (Прогноз)** — кільце на 24 години вперед (з урахуванням завтра).\n"
+        "• **📝 Список** — текстовий перелік інтервалів відключень.\n\n"
+        "💡 Ви завжди зможете змінити це в меню 'Змінити налаштування'.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await state.set_state(Registration.waiting_for_display_mode)
 
 @router.message(F.text == "⚙️ Змінити налаштування")
 async def cmd_settings(message: Message, state: FSMContext):
@@ -367,8 +378,18 @@ async def process_settings_choice(message: Message, state: FSMContext):
 
 @router.message(Registration.waiting_for_display_mode)
 async def process_display_mode(message: Message, state: FSMContext):
+    data = await state.get_data()
+    is_reg = data.get("is_registration", False)
+    
     if message.text == "⬅️ Назад":
-        await cmd_settings(message, state)
+        if is_reg:
+            # Повертаємось до вводу черги
+            buttons = [[KeyboardButton(text="⬅️ Назад")]]
+            keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+            await message.answer("Введіть ваші черги (наприклад: 1, 5.2):", reply_markup=keyboard)
+            await state.set_state(Registration.waiting_for_queue)
+        else:
+            await cmd_settings(message, state)
         return
 
     mode_map = {
@@ -389,10 +410,14 @@ async def process_display_mode(message: Message, state: FSMContext):
     from database.db import update_user_display_mode
     await update_user_display_mode(message.from_user.id, db_mode)
     
-    await message.answer(
-        f"Налаштування збережено! Режим: {user_mode}.",
-        reply_markup=get_main_keyboard()
-    )
+    if is_reg:
+        msg = f"🎉 **Вітаємо! Реєстрація завершена.**\n\nОбласть: {data['region_name']}\nЧерги: {data['reg_queues_str']}\nРежим: {user_mode}"
+        await message.answer(msg, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    else:
+        await message.answer(
+            f"Налаштування збережено! Режим: {user_mode}.",
+            reply_markup=get_main_keyboard()
+        )
     
     # Відправляємо оновлений графік
     await send_schedule(message, message.from_user.id)
