@@ -459,7 +459,7 @@ async def send_schedule(target: Any, tg_id: int):
         queues = json.loads(queue_id_json)
         if not isinstance(queues, list):
             queues = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
-    except:
+    except Exception as e:
         queues = [{"id": queue_id_json, "alias": queue_id_json}]
     
     media = []
@@ -481,10 +481,8 @@ async def send_schedule(target: Any, tg_id: int):
             cached_images = img_cache.get(region_id, q["id"], mode, sched_hash)
             
         if cached_images:
-            _LOGGER.debug(f"Cache hit for {region_id}/{q['id']} ({mode})")
             images_to_send = cached_images
         else:
-            _LOGGER.debug(f"Cache miss for {region_id}/{q['id']} ({mode})")
             today_data = schedule_data["schedule"].get(schedule_data["date_today"], {})
             tomorrow_data = schedule_data["schedule"].get(schedule_data["date_tomorrow"], {})
             
@@ -526,12 +524,11 @@ async def send_schedule(target: Any, tg_id: int):
         
         for i, img_buf in enumerate(images_to_send):
             photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{q['id']}_{i}.png")
-            # Додаємо підпис тільки до першого фото кожної черги
-            caption = f"📍 **{q['alias']}**\n{forecast_text}\n\n🕒 _Запитано о {timestamp_str}_" if i == 0 else None
+            caption = f"📍 **{q['alias']}**\n{forecast_text}\n\n🕒 _Запитано о {now_dt.strftime('%H:%M')}_" if i == 0 else None
             media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
 
     if not media:
-        if isinstance(target, Message):
+        if hasattr(target, "answer"):
             await target.answer("Не вдалося отримати розклад для жодної з ваших черг.")
         return
 
@@ -540,7 +537,7 @@ async def send_schedule(target: Any, tg_id: int):
     new_hash = hashlib.md5(sched_str.encode()).hexdigest()
     await update_user_hash(tg_id, new_hash)
 
-    if isinstance(target, Message):
+    if hasattr(target, "answer_photo"):
         if len(media) > 1:
             for i in range(0, len(media), 10):
                 await target.answer_media_group(media[i:i+10])
@@ -552,7 +549,7 @@ async def send_schedule(target: Any, tg_id: int):
                 reply_markup=get_main_keyboard(),
                 parse_mode="Markdown"
             )
-    elif isinstance(target, Bot):
+    elif hasattr(target, "send_photo"):
         if len(media) > 1:
             for i in range(0, len(media), 10):
                 await target.send_media_group(tg_id, media[i:i+10])

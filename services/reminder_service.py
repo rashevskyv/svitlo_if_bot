@@ -65,6 +65,8 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
                 # Скільки залишилося до відключення
                 diff = (off_time - now).total_seconds() / 60
                 
+                _LOGGER.info(f"Checking reminder for {tg_id}: off_time={off_time}, diff={diff}, reminder_min={reminder_min}")
+                
                 # Унікальний ідентифікатор цього відключення для запобігання дублів
                 event_id = f"{q['id']}_{off_time.strftime('%Y%m%d%H%M')}"
                 
@@ -77,6 +79,7 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
                             await update_user_last_reminder(tg_id, event_id)
                         except Exception as e:
                             _LOGGER.error(f"Failed to send reminder to {tg_id}: {e}")
-                elif diff > reminder_min + 30:
-                    # Якщо до відключення ще далеко, можна очистити last_rem (необов'язково, але корисно для логіки)
-                    pass
+                    else:
+                        _LOGGER.info(f"Reminder already sent for {event_id}")
+                else:
+                    _LOGGER.info(f"Diff {diff} is not in range (0, {reminder_min}]")

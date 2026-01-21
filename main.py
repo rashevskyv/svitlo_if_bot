@@ -129,27 +129,30 @@ async def check_updates():
                 s_data = await api_client.fetch_schedule(region_id, q["id"])
                 if s_data:
                     user_schedules[q["id"]] = s_data["schedule"]
-            
             if not user_schedules: continue
             
             new_hash = hashlib.md5(json.dumps(user_schedules, sort_keys=True).encode()).hexdigest()
             
             if new_hash != last_hash:
-                _LOGGER.info(f"Notifying user {tg_id} about schedule change")
-                try:
-                    await bot.send_message(tg_id, "🔔 Розклад оновився!")
-                    await send_schedule(bot, tg_id)
-                except Exception as e:
-                    err_msg = str(e)
-                    if "Forbidden: bot was blocked by the user" in err_msg or "chat not found" in err_msg:
-                        _LOGGER.warning(f"User {tg_id} blocked the bot. Removing from DB.")
-                        from database.db import DB_PATH
-                        import aiosqlite
-                        async with aiosqlite.connect(DB_PATH) as db:
-                            await db.execute("DELETE FROM users WHERE telegram_id = ?", (tg_id,))
-                            await db.commit()
-                    else:
-                        _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
+                if last_hash is not None:
+                    _LOGGER.info(f"Notifying user {tg_id} about schedule change")
+                    try:
+                        await bot.send_message(tg_id, "🔔 Розклад оновився!")
+                        await send_schedule(bot, tg_id)
+                    except Exception as e:
+                        err_msg = str(e)
+                        if "Forbidden: bot was blocked by the user" in err_msg or "chat not found" in err_msg:
+                            _LOGGER.warning(f"User {tg_id} blocked the bot. Removing from DB.")
+                            from database.db import DB_PATH
+                            import aiosqlite
+                            async with aiosqlite.connect(DB_PATH) as db:
+                                await db.execute("DELETE FROM users WHERE telegram_id = ?", (tg_id,))
+                                await db.commit()
+                        else:
+                            _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
+                
+                # Завжди оновлюємо хеш, навіть якщо це перший запуск
+                await update_user_hash(tg_id, new_hash)
 
 async def main():
     global api_client, session
