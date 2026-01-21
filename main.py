@@ -112,7 +112,9 @@ async def check_updates():
         # 4. Сповіщаємо користувачів цього регіону
         users = await get_users_by_region(region_id)
         for user in users:
-            tg_id, _, queue_id_json, last_hash, mode = user
+            # Розпаковуємо перші 5 значень (tg_id, region_id, queue_id, hash, mode)
+            # Решта (нагадування) тут не потрібні
+            tg_id, _, queue_id_json, last_hash, mode = user[:5]
             
             # Отримуємо актуальні розклади для всіх черг користувача
             try:
