@@ -126,9 +126,6 @@ def _generate_circle_view(
     # Центр
     ax.text(0, 0.15, queue_id, ha='center', va='center', fontsize=20, fontweight='bold')
     
-    if dynamic and waiting_tomorrow:
-        ax.text(0, -0.05, "Очікування\nзавтрашнього графіку", ha='center', va='center', 
-                fontsize=10, fontweight='bold', color=COLOR_OFF)
     
     ax.text(0, -0.1, title, ha='center', va='center', fontsize=14, fontweight='bold', color='#555555')
     ax.text(0, -0.25, f"{current_dt.strftime('%d.%m.%Y')}", ha='center', va='center', fontsize=10, color='grey')
