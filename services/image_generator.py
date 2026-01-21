@@ -85,9 +85,9 @@ def _generate_circle_view(
 
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(aspect="equal"))
     
-    # Малюємо кільце
+    # Малюємо кільце (без внутрішніх ліній для кращої читаємості)
     ax.pie(sizes, colors=colors, startangle=90, counterclock=False, 
-           wedgeprops=dict(width=0.4, edgecolor='w', linewidth=0.5))
+           wedgeprops=dict(width=0.4, edgecolor='none', linewidth=0))
 
     # Додаємо цифри годин
     for i in range(24):

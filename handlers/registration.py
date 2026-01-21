@@ -375,8 +375,12 @@ async def send_schedule(target: Any, tg_id: int):
             tomorrow_half = convert_api_to_half_list(tomorrow_data)
             
             # В режимі dynamic ми завжди показуємо 24 години вперед
-            # В інших режимах приховуємо завтра, якщо там немає відключень
-            if mode in ["classic", "list"] and "off" not in tomorrow_half:
+            # В інших режимах приховуємо завтра, якщо там немає даних (тільки unknown)
+            from services.image_generator import is_schedule_empty
+            
+            tomorrow_is_empty = is_schedule_empty(tomorrow_half)
+            
+            if mode in ["classic", "list"] and tomorrow_is_empty:
                 tomorrow_half_for_gen = []
             else:
                 tomorrow_half_for_gen = tomorrow_half
@@ -397,6 +401,10 @@ async def send_schedule(target: Any, tg_id: int):
         today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
         tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
         forecast_text = get_next_event_info(today_half, tomorrow_half, now_dt)
+        
+        # Додаємо повідомлення про відсутність графіку на завтра
+        if is_schedule_empty(tomorrow_half):
+            forecast_text += "\n\n⚠️ **Графіку на завтра ще немає.**"
         
         # Додаємо час запиту в підпис
         timestamp_str = now_dt.strftime("%H:%M")
