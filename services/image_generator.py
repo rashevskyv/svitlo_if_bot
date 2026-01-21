@@ -272,7 +272,14 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
             break
             
     if next_event_idx == -1:
-        forecast = "⚡️ Змін у графіку поки не заплановано."
+        if current_status == "off":
+            forecast = "⚡️ Змін у графіку поки не заплановано."
+        else:
+            # Перевіряємо чи були відключення сьогодні взагалі
+            if any(s in ["off", "possible"] for s in today_half):
+                forecast = "⚡️ Відключень на сьогодні більше не заплановано."
+            else:
+                forecast = "⚡️ Відключень на сьогодні не заплановано."
     else:
         event_time = datetime.combine(current_dt.date(), datetime.min.time()) + timedelta(minutes=next_event_idx * 30)
         diff = event_time - current_dt
