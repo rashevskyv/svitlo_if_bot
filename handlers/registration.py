@@ -29,6 +29,7 @@ class Registration(StatesGroup):
     waiting_for_queue = State()
     waiting_for_settings_choice = State()
     waiting_for_display_mode = State()
+    waiting_for_reminder_time = State()
 
 # Ключові слова для групування областей (динамічно)
 MACRO_GROUPS_KEYWORDS = {
@@ -273,6 +274,7 @@ async def cmd_settings(message: Message, state: FSMContext):
     buttons = [
         [KeyboardButton(text="🌍 Змінити регіон/чергу")],
         [KeyboardButton(text="🎨 Змінити вигляд графіку")],
+        [KeyboardButton(text="🔔 Налаштувати нагадування")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -286,6 +288,7 @@ async def process_settings_choice(message: Message, state: FSMContext):
     if choice == "🌍 Змінити регіон/чергу":
         await cmd_start(message, state)
     elif choice == "🎨 Змінити вигляд графіку":
+        # ... (existing logic for display mode)
         buttons = [
             [KeyboardButton(text="🕒 Коло (Доба)")],
             [KeyboardButton(text="🔮 Коло (Прогноз)")],
@@ -311,6 +314,27 @@ async def process_settings_choice(message: Message, state: FSMContext):
         )
         await message.answer(description, reply_markup=keyboard, parse_mode="Markdown")
         await state.set_state(Registration.waiting_for_display_mode)
+    elif choice == "🔔 Налаштувати нагадування":
+        user = await get_user(message.from_user.id)
+        current_rem = user[5] if user and len(user) > 5 else 0
+        
+        status_text = f"🔔 Зараз нагадування: **{'вимкнено' if current_rem == 0 else f'за {current_rem} хв'}**."
+        
+        buttons = [
+            [KeyboardButton(text="❌ Вимкнути")],
+            [KeyboardButton(text="5 хв"), KeyboardButton(text="10 хв"), KeyboardButton(text="15 хв")],
+            [KeyboardButton(text="30 хв"), KeyboardButton(text="45 хв"), KeyboardButton(text="60 хв")],
+            [KeyboardButton(text="⬅️ Назад")]
+        ]
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        
+        await message.answer(
+            f"{status_text}\n\n"
+            "Оберіть час або введіть кількість хвилин вручну (наприклад, `20`):",
+            reply_markup=keyboard,
+            parse_mode="Markdown"
+        )
+        await state.set_state(Registration.waiting_for_reminder_time)
     elif choice == "⬅️ Назад":
         await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
         await state.clear()
@@ -353,6 +377,35 @@ async def process_display_mode(message: Message, state: FSMContext):
     
     # Відправляємо оновлений графік
     await send_schedule(message, message.from_user.id)
+    await state.clear()
+
+@router.message(Registration.waiting_for_reminder_time)
+async def process_reminder_time(message: Message, state: FSMContext):
+    text = message.text
+    
+    if text == "⬅️ Назад":
+        await cmd_settings(message, state)
+        return
+        
+    if text == "❌ Вимкнути":
+        minutes = 0
+    else:
+        # Витягуємо число з тексту (наприклад "15 хв" -> 15)
+        match = re.search(r"(\d+)", text)
+        if match:
+            minutes = int(match.group(1))
+        else:
+            await message.answer("Будь ласка, введіть число хвилин (наприклад, 15) або оберіть варіант з кнопок.")
+            return
+
+    from database.db import update_user_reminder
+    await update_user_reminder(message.from_user.id, minutes)
+    
+    if minutes == 0:
+        await message.answer("Нагадування вимкнено.", reply_markup=get_main_keyboard())
+    else:
+        await message.answer(f"Налаштовано! Я нагадаю вам про відключення за **{minutes} хв**.", reply_markup=get_main_keyboard(), parse_mode="Markdown")
+    
     await state.clear()
 
 # Глобальний обробник для незареєстрованих користувачів

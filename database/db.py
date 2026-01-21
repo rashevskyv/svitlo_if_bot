@@ -32,26 +32,41 @@ async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[
                 queue_id = excluded.queue_id
         """, (telegram_id, region_id, queue_json))
         
-        # Перевіряємо чи є колонка display_mode (міграція для існуючих БД)
+        # Міграції для існуючих БД
         try:
             await db.execute("ALTER TABLE users ADD COLUMN display_mode TEXT DEFAULT 'classic'")
         except aiosqlite.OperationalError:
-            pass # Вже є
+            pass
+            
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN reminder_minutes INTEGER DEFAULT 0")
+        except aiosqlite.OperationalError:
+            pass
+
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN last_reminder_at TEXT")
+        except aiosqlite.OperationalError:
+            pass
             
         await db.commit()
 
 async def get_user(telegram_id: int) -> Optional[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode FROM users WHERE telegram_id = ?", (telegram_id,)) as cursor:
+        async with db.execute("""
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at 
+            FROM users WHERE telegram_id = ?
+        """, (telegram_id,)) as cursor:
             row = await cursor.fetchone()
             if row:
-                # row: (tg_id, region_id, queue_id_json, hash, mode)
                 return row
             return None
 
 async def get_all_users() -> List[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode FROM users") as cursor:
+        async with db.execute("""
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at 
+            FROM users
+        """) as cursor:
             return await cursor.fetchall()
 
 async def update_user_hash(telegram_id: int, schedule_hash: str):
@@ -62,6 +77,16 @@ async def update_user_hash(telegram_id: int, schedule_hash: str):
 async def update_user_display_mode(telegram_id: int, display_mode: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE users SET display_mode = ? WHERE telegram_id = ?", (display_mode, telegram_id))
+        await db.commit()
+
+async def update_user_reminder(telegram_id: int, minutes: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET reminder_minutes = ? WHERE telegram_id = ?", (minutes, telegram_id))
+        await db.commit()
+
+async def update_user_last_reminder(telegram_id: int, timestamp: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET last_reminder_at = ? WHERE telegram_id = ?", (timestamp, telegram_id))
         await db.commit()
 
 async def get_users_by_queue(region_id: str, queue_id: str) -> List[int]:
@@ -113,5 +138,8 @@ async def get_users_by_region(region_id: str) -> List[Tuple]:
     Повертає всіх користувачів конкретного регіону.
     """
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode FROM users WHERE region_id = ?", (region_id,)) as cursor:
+        async with db.execute("""
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at 
+            FROM users WHERE region_id = ?
+        """, (region_id,)) as cursor:
             return await cursor.fetchall()

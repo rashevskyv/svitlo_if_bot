@@ -165,6 +165,10 @@ async def main():
     # Налаштування планувальника
     _LOGGER.info(f"Starting scheduler with interval {CHECK_INTERVAL} minutes (aligned to absolute time)")
     scheduler.add_job(check_updates, "cron", minute=f"*/{CHECK_INTERVAL}")
+    
+    from services.reminder_service import check_reminders
+    scheduler.add_job(check_reminders, "interval", minutes=1, args=[bot, api_client])
+    
     scheduler.start()
     
     # Негайна перевірка при старті
