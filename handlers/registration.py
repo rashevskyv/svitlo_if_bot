@@ -378,7 +378,7 @@ async def send_schedule(target: Any, tg_id: int):
     Універсальна функція для відправки графіку.
     Використовує ImageCache для classic/list режимів.
     """
-    from services.image_generator import generate_schedule_image, convert_api_to_half_list, get_next_event_info
+    from services.image_generator import generate_schedule_image, convert_api_to_half_list, get_next_event_info, is_schedule_empty
     from services.image_cache import ImageCache
     from aiogram import Bot
     from aiogram.types import Message
@@ -436,8 +436,6 @@ async def send_schedule(target: Any, tg_id: int):
             
             # В режимі dynamic ми завжди показуємо 24 години вперед
             # В інших режимах приховуємо завтра, якщо там немає даних (тільки unknown)
-            from services.image_generator import is_schedule_empty
-            
             tomorrow_is_empty = is_schedule_empty(tomorrow_half)
             
             if mode in ["classic", "list"] and tomorrow_is_empty:
