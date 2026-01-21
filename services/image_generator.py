@@ -88,8 +88,8 @@ def _generate_circle_view(
     sizes = [1] * 48
 
     fig = plt.figure(figsize=(8, 8))
-    # Збільшуємо графік на 15% (0.8 * 1.15 = 0.92)
-    ax = fig.add_axes([0.04, 0.04, 0.92, 0.92], projection=None, aspect='equal')
+    # Максимально збільшуємо графік, щоб він займав майже весь простір
+    ax = fig.add_axes([0.01, 0.01, 0.98, 0.98], projection=None, aspect='equal')
     
     # Малюємо кільце з 48 сегментів, але БЕЗ автоматичних ліній
     ax.pie(sizes, colors=colors, startangle=90, counterclock=False, 
@@ -137,12 +137,14 @@ def _generate_circle_view(
     ax.text(0, -0.25, f"{current_dt.strftime('%d.%m.%Y')}", ha='center', va='center', fontsize=10, color='grey')
 
     if region_name:
-        # Додаємо заголовок зверху
-        plt.text(0.5, 0.98, region_name, ha='center', va='top', fontsize=16, fontweight='bold', color='#333333', transform=fig.transFigure)
+        # Додаємо заголовок зверху (трохи вище, щоб не наповзало)
+        plt.text(0.5, 0.99, region_name, ha='center', va='top', fontsize=16, fontweight='bold', color='#333333', transform=fig.transFigure, 
+                 bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2))
     
     if bot_username:
-        # Переносимо в самий нижній кут
-        plt.text(0.98, 0.01, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=fig.transFigure)
+        # Переносимо в самий нижній кут з невеликою підкладкою для читабельності
+        plt.text(0.99, 0.01, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=fig.transFigure,
+                 bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=1))
 
     buf = BytesIO()
     plt.savefig(buf, format='png', dpi=120)
@@ -229,8 +231,9 @@ def _generate_list_view(
         plt.text(0.05, 0.02, f"Станом на {current_dt.strftime('%H:%M')}", fontsize=9, color='grey', transform=ax.transAxes)
 
     if bot_username:
-        # Переносимо в самий нижній кут
-        plt.text(0.98, 0.01, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=fig.transFigure)
+        # Переносимо в самий нижній кут з невеликою підкладкою для читабельності
+        plt.text(0.99, 0.01, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=fig.transFigure,
+                 bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=1))
 
     buf = BytesIO()
     plt.savefig(buf, format='png', dpi=120)
