@@ -462,7 +462,6 @@ async def send_schedule(target: Any, tg_id: int):
     except Exception as e:
         queues = [{"id": queue_id_json, "alias": queue_id_json}]
     
-    media = []
     all_schedules = {}
     img_cache = ImageCache()
     now_dt = datetime.now()
@@ -490,7 +489,7 @@ async def send_schedule(target: Any, tg_id: int):
             tomorrow_half = convert_api_to_half_list(tomorrow_data)
             
             # В режимі dynamic ми завжди показуємо 24 години вперед
-            # В інших режимах приховуємо завтра, якщо там немає даних (тільки unknown)
+            # В інших режимах приховуємо завтра, якщо там немає даних (тільки unknown або все green)
             tomorrow_is_empty = is_schedule_empty(tomorrow_half)
             
             if mode in ["classic", "list"] and tomorrow_is_empty:
@@ -522,45 +521,50 @@ async def send_schedule(target: Any, tg_id: int):
         # Додаємо час запиту в підпис
         timestamp_str = now_dt.strftime("%H:%M")
         
+        queue_media = []
         for i, img_buf in enumerate(images_to_send):
             photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{q['id']}_{i}.png")
-            caption = f"📍 **{q['alias']}**\n{forecast_text}\n\n🕒 _Запитано о {now_dt.strftime('%H:%M')}_" if i == 0 else None
-            media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
+            # Додаємо підпис тільки до першого фото кожної черги
+            caption = f"📍 **{q['alias']}**\n{forecast_text}\n\n🕒 _Запитано о {timestamp_str}_" if i == 0 else None
+            queue_media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
+        
+        if not queue_media:
+            continue
 
-    if not media:
-        if hasattr(target, "answer"):
-            await target.answer("Не вдалося отримати розклад для жодної з ваших черг.")
-        return
+        # Надсилаємо розклад для цієї черги
+        if hasattr(target, "answer_photo"):
+            if len(queue_media) > 1:
+                await target.answer_media_group(queue_media)
+            else:
+                await target.answer_photo(
+                    queue_media[0].media,
+                    caption=queue_media[0].caption,
+                    parse_mode="Markdown"
+                )
+        elif hasattr(target, "send_photo"):
+            if len(queue_media) > 1:
+                await target.send_media_group(tg_id, queue_media)
+            else:
+                await target.send_photo(
+                    tg_id,
+                    queue_media[0].media,
+                    caption=queue_media[0].caption,
+                    parse_mode="Markdown"
+                )
 
     # Оновлюємо хеш користувача
-    sched_str = json.dumps(all_schedules, sort_keys=True)
-    new_hash = hashlib.md5(sched_str.encode()).hexdigest()
-    await update_user_hash(tg_id, new_hash)
-
-    if hasattr(target, "answer_photo"):
-        if len(media) > 1:
-            for i in range(0, len(media), 10):
-                await target.answer_media_group(media[i:i+10])
+    if all_schedules:
+        sched_str = json.dumps(all_schedules, sort_keys=True)
+        new_hash = hashlib.md5(sched_str.encode()).hexdigest()
+        await update_user_hash(tg_id, new_hash)
+        
+        # Додаємо клавіатуру в кінці, якщо це повідомлення
+        if hasattr(target, "answer"):
+            from handlers.registration import get_main_keyboard
             await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard())
-        else:
-            await target.answer_photo(
-                media[0].media,
-                caption=media[0].caption,
-                reply_markup=get_main_keyboard(),
-                parse_mode="Markdown"
-            )
-    elif hasattr(target, "send_photo"):
-        if len(media) > 1:
-            for i in range(0, len(media), 10):
-                await target.send_media_group(tg_id, media[i:i+10])
-        else:
-            await target.send_photo(
-                tg_id,
-                media[0].media,
-                caption=media[0].caption,
-                reply_markup=get_main_keyboard(),
-                parse_mode="Markdown"
-            )
+    else:
+        if hasattr(target, "answer"):
+            await target.answer("Не вдалося отримати розклад для жодної з ваших черг.")
 
 @router.message(F.text.contains("Поточний статус"))
 @router.message(Command("status"))

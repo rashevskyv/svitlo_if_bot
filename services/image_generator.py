@@ -124,14 +124,14 @@ def _generate_circle_view(
     ax.plot([0, 0], [mx_s, mx_e], color='white', linewidth=4, zorder=10)
     
     # Центр
-    ax.text(0, 0.15, title, ha='center', va='center', fontsize=20, fontweight='bold')
+    ax.text(0, 0.15, queue_id, ha='center', va='center', fontsize=20, fontweight='bold')
     
     if dynamic and waiting_tomorrow:
         ax.text(0, -0.05, "Очікування\nзавтрашнього графіку", ha='center', va='center', 
                 fontsize=10, fontweight='bold', color=COLOR_OFF)
     
-    ax.text(0, -0.2, f"Черга {queue_id}", ha='center', va='center', fontsize=14, fontweight='bold', color='#555555')
-    ax.text(0, -0.35, f"{current_dt.strftime('%d.%m.%Y')}", ha='center', va='center', fontsize=10, color='grey')
+    ax.text(0, -0.1, title, ha='center', va='center', fontsize=14, fontweight='bold', color='#555555')
+    ax.text(0, -0.25, f"{current_dt.strftime('%d.%m.%Y')}", ha='center', va='center', fontsize=10, color='grey')
 
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
@@ -241,10 +241,11 @@ def convert_api_to_half_list(day_schedule: dict) -> List[str]:
 
 def is_schedule_empty(half_list: List[str]) -> bool:
     """
-    Перевіряє, чи є графік порожнім (тільки невідомі статуси).
+    Перевіряє, чи є графік порожнім (тільки невідомі статуси або тільки "є світло").
+    Повністю зелений графік на завтра зазвичай означає відсутність даних.
     """
     if not half_list: return True
-    return all(s == "unknown" for s in half_list)
+    return all(s == "unknown" for s in half_list) or all(s == "on" for s in half_list)
 
 def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current_dt: datetime) -> str:
     """
