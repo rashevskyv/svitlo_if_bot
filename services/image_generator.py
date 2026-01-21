@@ -87,7 +87,8 @@ def _generate_circle_view(
     colors = [color_map.get(s, COLOR_UNKNOWN) for s in display_data]
     sizes = [1] * 48
 
-    fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(aspect="equal"))
+    fig = plt.figure(figsize=(8, 8))
+    ax = fig.add_axes([0.1, 0.1, 0.8, 0.8], projection=None, aspect='equal')
     
     # Малюємо кільце з 48 сегментів, але БЕЗ автоматичних ліній
     ax.pie(sizes, colors=colors, startangle=90, counterclock=False, 
@@ -136,13 +137,13 @@ def _generate_circle_view(
 
     if region_name:
         # Додаємо заголовок зверху
-        plt.text(0.5, 0.97, region_name, ha='center', va='top', fontsize=16, fontweight='bold', color='#333333', transform=fig.transFigure)
+        plt.text(0.5, 0.96, region_name, ha='center', va='top', fontsize=16, fontweight='bold', color='#333333', transform=fig.transFigure)
     
     if bot_username:
         ax.text(0.98, 0.02, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=ax.transAxes)
 
     buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
+    plt.savefig(buf, format='png', dpi=120)
     buf.seek(0)
     plt.close(fig)
     return buf
@@ -170,9 +171,8 @@ def _generate_list_view(
     if start_time is not None:
         intervals.append((start_time, 48))
 
-    # Розрахунок висоти (більше повітря)
-    fig_height = 3.0 + len(intervals) * 1.2
-    fig, ax = plt.subplots(figsize=(8, fig_height))
+    # Розрахунок висоти (завжди квадрат 8x8)
+    fig, ax = plt.subplots(figsize=(8, 8))
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_axis_off()
@@ -184,7 +184,7 @@ def _generate_list_view(
     # Підзаголовок
     plt.text(0.5, 0.88, f"Графік відключень • {title}", ha='center', va='top', fontsize=14, fontweight='bold', color='#555555')
     
-    y_pos = 0.65 # Починаємо нижче, щоб не наповзало на заголовок
+    y_pos = 0.75 # Починаємо нижче, щоб не наповзало на заголовок
     
     if not intervals:
         plt.text(0.5, 0.40, f"{current_dt.strftime('%d.%m.%Y')}\nВідключень не заплановано", 
@@ -230,13 +230,7 @@ def _generate_list_view(
         plt.text(0.98, 0.02, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=ax.transAxes)
 
     buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
-    buf.seek(0)
-    plt.close(fig)
-    return buf
-
-    buf = BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
+    plt.savefig(buf, format='png', dpi=120)
     buf.seek(0)
     plt.close(fig)
     return buf
