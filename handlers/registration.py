@@ -79,8 +79,18 @@ async def cmd_start(message: Message, state: FSMContext):
 @router.message(Registration.waiting_for_macro_region)
 async def process_macro_region(message: Message, state: FSMContext):
     user_input = message.text
+    
+    if user_input == "⬅️ Назад":
+        await state.clear()
+        await cmd_start(message, state)
+        return
+
     data = await state.get_data()
     grouped = data.get("grouped_regions", {})
+    if not grouped:
+        grouped = await get_grouped_regions()
+        await state.update_data(grouped_regions=grouped)
+
     all_regions = await api_client.get_regions()
     
     # 1. Перевірка, чи це макрорегіон
@@ -103,10 +113,14 @@ async def process_macro_region(message: Message, state: FSMContext):
         # Знайдено рівно один збіг - вибираємо його
         reg_id, reg_name = list(found_regions.items())[0]
         await state.update_data(region_id=reg_id, region_name=reg_name, regions=all_regions)
+        
+        buttons = [[KeyboardButton(text="⬅️ Назад")]]
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        
         await message.answer(f"Знайдено: {reg_name}. Тепер введіть номер вашої черги (наприклад, 4.2 або 5):\n\n"
                              "Можна вказати декілька черг через кому та дати їм назви, наприклад:\n"
                              "`4 (Дім), 5.2 (Робота)`", 
-                             reply_markup=ReplyKeyboardRemove(),
+                             reply_markup=keyboard,
                              parse_mode="Markdown")
         await state.set_state(Registration.waiting_for_queue)
     elif len(found_regions) > 1:
@@ -129,7 +143,10 @@ async def process_region(message: Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    regions = data.get("regions", {})
+    regions = data.get("regions")
+    if not regions:
+        regions = await api_client.get_regions()
+        await state.update_data(regions=regions)
     
     # Шукаємо ID регіону за назвою (точний збіг або підрядок)
     region_id = next((k for k, v in regions.items() if v == user_input), None)
@@ -236,6 +253,13 @@ async def process_queue(message: Message, state: FSMContext):
 @router.message(F.text == "⚙️ Змінити налаштування")
 async def cmd_settings(message: Message, state: FSMContext):
     await state.clear() # Очищуємо стан, якщо користувач натиснув кнопку меню
+    
+    # Перевірка реєстрації
+    user = await get_user(message.from_user.id)
+    if not user:
+        await cmd_start(message, state)
+        return
+
     buttons = [
         [KeyboardButton(text="🌍 Змінити регіон/чергу")],
         [KeyboardButton(text="🎨 Змінити вигляд графіку")],
@@ -281,7 +305,12 @@ async def process_settings_choice(message: Message, state: FSMContext):
         await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
         await state.clear()
     else:
-        await message.answer("Будь ласка, оберіть варіант з кнопок.")
+        # Якщо користувач натиснув іншу кнопку (наприклад, з головного меню), 
+        # але він у стані waiting_for_settings_choice - перенаправляємо
+        if choice == "📊 Поточний статус":
+            await cmd_status(message, state)
+        else:
+            await message.answer("Будь ласка, оберіть варіант з кнопок.")
 
 @router.message(Registration.waiting_for_display_mode)
 async def process_display_mode(message: Message, state: FSMContext):
@@ -297,7 +326,10 @@ async def process_display_mode(message: Message, state: FSMContext):
     
     user_mode = message.text
     if user_mode not in mode_map:
-        await message.answer("Будь ласка, оберіть режим з кнопок.")
+        if user_mode == "📊 Поточний статус":
+            await cmd_status(message, state)
+        else:
+            await message.answer("Будь ласка, оберіть режим з кнопок.")
         return
         
     db_mode = mode_map[user_mode]
@@ -312,6 +344,24 @@ async def process_display_mode(message: Message, state: FSMContext):
     # Відправляємо оновлений графік
     await send_schedule(message, message.from_user.id)
     await state.clear()
+
+# Глобальний обробник для незареєстрованих користувачів
+@router.message()
+async def global_handler(message: Message, state: FSMContext):
+    user = await get_user(message.from_user.id)
+    if not user:
+        _LOGGER.info(f"Unregistered user {message.from_user.id} sent message: {message.text}. Redirecting to /start")
+        await cmd_start(message, state)
+        return
+    
+    # Якщо користувач зареєстрований, але ми тут - значить він натиснув щось не те або стан збився
+    if message.text == "⬅️ Назад":
+        await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
+        await state.clear()
+        return
+
+    # Якщо це просто текст, який ми не знаємо як обробити
+    await message.answer("Я вас не зрозумів. Будь ласка, скористайтеся кнопками меню.", reply_markup=get_main_keyboard())
 
 async def send_schedule(target: Any, tg_id: int):
     """
