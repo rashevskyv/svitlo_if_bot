@@ -451,8 +451,8 @@ async def send_schedule(target: Any, tg_id: int):
             await target.answer("Ви ще не зареєстровані. Будь ласка, скористайтеся командою /start")
         return
     
-    # user: (tg_id, region_id, queue_id_json, hash, mode)
-    _, region_id, queue_id_json, _, mode = user
+    # user: (tg_id, region_id, queue_id_json, hash, mode, reminder_min, last_rem)
+    _, region_id, queue_id_json, _, mode = user[:5]
     if not mode: mode = "classic"
     
     try:
