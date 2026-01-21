@@ -500,9 +500,36 @@ async def send_schedule(target: Any, tg_id: int):
                 parse_mode="Markdown"
             )
 
-@router.message(F.text == "📊 Поточний статус")
+@router.message(F.text.contains("Поточний статус"))
 @router.message(Command("status"))
 async def cmd_status(message: Message, state: FSMContext):
     _LOGGER.info(f"Button 'Поточний статус' clicked by user {message.from_user.id}")
-    await state.clear() # Очищуємо стан, якщо користувач натиснув кнопку меню
+    await state.clear()
     await send_schedule(message, message.from_user.id)
+
+# Глобальний обробник для всього іншого
+@router.message()
+async def global_handler(message: Message, state: FSMContext):
+    user = await get_user(message.from_user.id)
+    text = message.text or ""
+    
+    # 1. Якщо користувача немає в базі — завжди на старт
+    if not user:
+        _LOGGER.info(f"Unregistered user {message.from_user.id} sent: {text}. Redirecting to /start")
+        await cmd_start(message, state)
+        return
+    
+    # 2. Спроба розпізнати основні команди навіть без стану
+    if "Поточний статус" in text or "status" in text.lower():
+        await cmd_status(message, state)
+        return
+    
+    if "Змінити налаштування" in text or "settings" in text.lower():
+        await cmd_settings(message, state)
+        return
+
+    # 3. Якщо бот не розуміє — робимо /start (перезапуск реєстрації/меню)
+    _LOGGER.info(f"Confused user {message.from_user.id} sent: {text}. Redirecting to /start as requested.")
+    await state.clear()
+    await message.answer("Я вас не зовсім зрозумів, тому перезапускаю головне меню...")
+    await cmd_start(message, state)
