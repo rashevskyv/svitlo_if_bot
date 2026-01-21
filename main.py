@@ -58,11 +58,15 @@ async def check_updates():
     from services.api_client import REGIONS, API_REGION_MAP
     
     _LOGGER.info("Checking for updates...")
-    changed_region_cpus = await api_client._refresh_cache()
+    await api_client._refresh_cache()
+    changed_region_cpus = api_client.get_changed_regions(reset=True)
     
     if not changed_region_cpus:
         _LOGGER.info("No regions changed.")
         return
+
+    bot_info = await bot.get_me()
+    bot_username = bot_info.username
 
     img_cache = ImageCache()
     
@@ -105,7 +109,10 @@ async def check_updates():
                 
                 # Для кешу генеруємо БЕЗ часової відмітки
                 images = generate_schedule_image(
-                    today_half, tomorrow_half_for_gen, datetime.now(), mode, q_id, show_time_marker=False
+                    today_half, tomorrow_half_for_gen, datetime.now(), mode, q_id, 
+                    show_time_marker=False,
+                    region_name=REGIONS.get(region_id),
+                    bot_username=bot_username
                 )
                 img_cache.set(region_id, q_id, mode, sched_hash, images)
 

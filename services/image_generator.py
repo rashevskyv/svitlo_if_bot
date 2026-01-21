@@ -19,7 +19,9 @@ def generate_schedule_image(
     current_dt: datetime, 
     mode: str = "classic",
     queue_id: str = "Unknown",
-    show_time_marker: bool = True
+    show_time_marker: bool = True,
+    region_name: Optional[str] = None,
+    bot_username: Optional[str] = None
 ) -> List[BytesIO]:
     """
     Головна функція генерації зображень залежно від режиму.
@@ -28,19 +30,19 @@ def generate_schedule_image(
     images = []
     
     if mode == "list":
-        images.append(_generate_list_view(today_half, current_dt, queue_id, "Сьогодні", show_time_marker))
+        images.append(_generate_list_view(today_half, current_dt, queue_id, "Сьогодні", show_time_marker, region_name, bot_username))
         if tomorrow_half and len(tomorrow_half) == 48:
             tomorrow_dt = current_dt + timedelta(days=1)
-            images.append(_generate_list_view(tomorrow_half, tomorrow_dt, queue_id, "Завтра", show_time_marker))
+            images.append(_generate_list_view(tomorrow_half, tomorrow_dt, queue_id, "Завтра", show_time_marker, region_name, bot_username))
     elif mode == "dynamic":
         # Динамічний режим за своєю суттю об'єднує 24 години від зараз
-        images.append(_generate_circle_view(today_half, tomorrow_half, current_dt, queue_id, dynamic=True, show_time_marker=True))
+        images.append(_generate_circle_view(today_half, tomorrow_half, current_dt, queue_id, dynamic=True, show_time_marker=True, region_name=region_name, bot_username=bot_username))
     else:
         # Класичне коло - два окремих зображення
-        images.append(_generate_circle_view(today_half, [], current_dt, queue_id, dynamic=False, title="Сьогодні", show_time_marker=show_time_marker))
+        images.append(_generate_circle_view(today_half, [], current_dt, queue_id, dynamic=False, title="Сьогодні", show_time_marker=show_time_marker, region_name=region_name, bot_username=bot_username))
         if tomorrow_half and len(tomorrow_half) == 48:
             tomorrow_dt = current_dt + timedelta(days=1)
-            images.append(_generate_circle_view(tomorrow_half, [], tomorrow_dt, queue_id, dynamic=False, title="Завтра", show_time_marker=show_time_marker))
+            images.append(_generate_circle_view(tomorrow_half, [], tomorrow_dt, queue_id, dynamic=False, title="Завтра", show_time_marker=show_time_marker, region_name=region_name, bot_username=bot_username))
             
     return images
 
@@ -51,7 +53,9 @@ def _generate_circle_view(
     queue_id: str,
     dynamic: bool = False,
     title: str = "Сьогодні",
-    show_time_marker: bool = True
+    show_time_marker: bool = True,
+    region_name: Optional[str] = None,
+    bot_username: Optional[str] = None
 ) -> BytesIO:
     """
     Генерує одну кругову діаграму.
@@ -130,6 +134,12 @@ def _generate_circle_view(
     ax.text(0, -0.1, title, ha='center', va='center', fontsize=14, fontweight='bold', color='#555555')
     ax.text(0, -0.25, f"{current_dt.strftime('%d.%m.%Y')}", ha='center', va='center', fontsize=10, color='grey')
 
+    if region_name:
+        ax.text(0, 0.48, region_name, ha='center', va='center', fontsize=12, fontweight='bold', color='#333333')
+    
+    if bot_username:
+        ax.text(0.98, 0.02, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=ax.transAxes)
+
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
     buf.seek(0)
@@ -141,7 +151,9 @@ def _generate_list_view(
     current_dt: datetime, 
     queue_id: str,
     title: str = "Сьогодні",
-    show_time_marker: bool = True
+    show_time_marker: bool = True,
+    region_name: Optional[str] = None,
+    bot_username: Optional[str] = None
 ) -> BytesIO:
     """
     Генерує текстову картку зі списком відключень для одного дня.
@@ -208,6 +220,12 @@ def _generate_list_view(
 
     if show_time_marker:
         plt.text(0.05, 0.02, f"Станом на {current_dt.strftime('%H:%M')}", fontsize=9, color='grey', transform=ax.transAxes)
+
+    if region_name:
+        plt.text(0.5, 0.93, region_name, ha='center', va='top', fontsize=12, fontweight='bold', color='#555555')
+
+    if bot_username:
+        plt.text(0.98, 0.02, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=ax.transAxes)
 
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)

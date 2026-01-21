@@ -501,8 +501,22 @@ async def send_schedule(target: Any, tg_id: int):
             # Для інших - ні (вони кешуються без маркера).
             show_marker = (mode == "dynamic")
             
+            # Отримуємо назву регіону з REGIONS
+            from services.api_client import REGIONS
+            reg_name = REGIONS.get(region_id, "Unknown Region")
+            
+            # Отримуємо username бота
+            bot = target.bot if hasattr(target, "bot") else None
+            bot_username = None
+            if bot:
+                bot_info = await bot.get_me()
+                bot_username = bot_info.username
+            
             images_to_send = generate_schedule_image(
-                today_half, tomorrow_half_for_gen, now_dt, mode, q["alias"], show_time_marker=show_marker
+                today_half, tomorrow_half_for_gen, now_dt, mode, q["alias"], 
+                show_time_marker=show_marker,
+                region_name=reg_name,
+                bot_username=bot_username
             )
             
             # Кешуємо, якщо це не dynamic

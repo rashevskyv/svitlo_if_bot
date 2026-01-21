@@ -86,6 +86,7 @@ class SvitloApiClient:
         self._cache_ttl = cache_ttl # seconds
         self._etag = None
         self._region_hashes = {} # region_cpu -> hash
+        self._pending_changes = set() # region_cpu
         self._initialized = True
 
     async def fetch_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
@@ -180,6 +181,7 @@ class SvitloApiClient:
                     if self._region_hashes.get(cpu) != r_hash:
                         changed_regions.append(cpu)
                         self._region_hashes[cpu] = r_hash
+                        self._pending_changes.add(cpu)
                 
                 self._cached_data = new_data
                 self._last_fetch_time = time.time()
@@ -193,6 +195,17 @@ class SvitloApiClient:
                 self._session = None
         
         return changed_regions
+
+    def get_changed_regions(self, reset: bool = True) -> list[str]:
+        """
+        Повертає список CPU регіонів, які змінилися з моменту останнього виклику з reset=True.
+        Це дозволяє різним сервісам (наприклад, check_updates) не пропускати зміни,
+        навіть якщо кеш був оновлений іншим сервісом (наприклад, check_reminders).
+        """
+        changes = list(self._pending_changes)
+        if reset:
+            self._pending_changes.clear()
+        return changes
 
     async def get_regions(self) -> Dict[str, str]:
         """
