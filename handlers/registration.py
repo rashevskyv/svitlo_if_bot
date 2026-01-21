@@ -330,7 +330,8 @@ async def process_settings_choice(message: Message, state: FSMContext):
         
         await message.answer(
             f"{status_text}\n\n"
-            "Оберіть час або введіть кількість хвилин вручну (наприклад, `20`):",
+            "📌 **Ви можете обрати варіант з кнопок або просто вказати будь-яке число хвилин вручну.**\n\n"
+            "Наприклад, просто напишіть `20` або `120`.",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
@@ -394,6 +395,9 @@ async def process_reminder_time(message: Message, state: FSMContext):
         match = re.search(r"(\d+)", text)
         if match:
             minutes = int(match.group(1))
+            if minutes < 1 or minutes > 1440:
+                await message.answer("Будь ласка, введіть число від 1 до 1440 (24 години).")
+                return
         else:
             await message.answer("Будь ласка, введіть число хвилин (наприклад, 15) або оберіть варіант з кнопок.")
             return
