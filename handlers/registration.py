@@ -475,11 +475,11 @@ async def send_schedule(target: Any, tg_id: int):
             today_half = convert_api_to_half_list(today_data)
             tomorrow_half = convert_api_to_half_list(tomorrow_data)
             
-            # В режимі dynamic ми завжди показуємо 24 години вперед
-            # В інших режимах приховуємо завтра, якщо там немає даних (тільки unknown або все green)
+            # В режимі dynamic ми завжди показуємо 24 години вперед, але якщо завтра порожньо - воно буде сірим
+            # В інших режимах приховуємо завтра зовсім, якщо там немає даних
             tomorrow_is_empty = is_schedule_empty(tomorrow_half)
             
-            if mode in ["classic", "list"] and tomorrow_is_empty:
+            if tomorrow_is_empty:
                 tomorrow_half_for_gen = []
             else:
                 tomorrow_half_for_gen = tomorrow_half
