@@ -59,7 +59,8 @@ async def get_grouped_regions():
 
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
-    _LOGGER.info(f"User {message.from_user.id} started registration")
+    _LOGGER.info(f"User {message.from_user.id} started registration/restart")
+    await state.clear() # Завжди очищуємо стан при /start
     
     grouped = await get_grouped_regions()
     await state.update_data(grouped_regions=grouped)
@@ -75,6 +76,15 @@ async def cmd_start(message: Message, state: FSMContext):
         parse_mode="Markdown"
     )
     await state.set_state(Registration.waiting_for_macro_region)
+
+# Пріоритетні обробники для головного меню (працюють навіть у станах реєстрації)
+@router.message(F.text.contains("Поточний статус"))
+async def priority_status(message: Message, state: FSMContext):
+    await cmd_status(message, state)
+
+@router.message(F.text.contains("Змінити налаштування"))
+async def priority_settings(message: Message, state: FSMContext):
+    await cmd_settings(message, state)
 
 @router.message(Registration.waiting_for_macro_region)
 async def process_macro_region(message: Message, state: FSMContext):
@@ -513,23 +523,13 @@ async def global_handler(message: Message, state: FSMContext):
     user = await get_user(message.from_user.id)
     text = message.text or ""
     
-    # 1. Якщо користувача немає в базі — завжди на старт
-    if not user:
-        _LOGGER.info(f"Unregistered user {message.from_user.id} sent: {text}. Redirecting to /start")
-        await cmd_start(message, state)
-        return
-    
-    # 2. Спроба розпізнати основні команди навіть без стану
-    if "Поточний статус" in text or "status" in text.lower():
-        await cmd_status(message, state)
-        return
-    
-    if "Змінити налаштування" in text or "settings" in text.lower():
-        await cmd_settings(message, state)
-        return
-
-    # 3. Якщо бот не розуміє — робимо /start (перезапуск реєстрації/меню)
+    # Якщо бот не розуміє — робимо /start (перезапуск реєстрації/меню)
     _LOGGER.info(f"Confused user {message.from_user.id} sent: {text}. Redirecting to /start as requested.")
     await state.clear()
-    await message.answer("Я вас не зовсім зрозумів, тому перезапускаю головне меню...")
+    
+    if not user:
+        await message.answer("Ви ще не зареєстровані. Починаємо реєстрацію...")
+    else:
+        await message.answer("Я вас не зовсім зрозумів, тому перезапускаю головне меню...")
+    
     await cmd_start(message, state)
