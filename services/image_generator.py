@@ -135,7 +135,8 @@ def _generate_circle_view(
     ax.text(0, -0.25, f"{current_dt.strftime('%d.%m.%Y')}", ha='center', va='center', fontsize=10, color='grey')
 
     if region_name:
-        ax.text(0, 0.48, region_name, ha='center', va='center', fontsize=12, fontweight='bold', color='#333333')
+        # Додаємо заголовок зверху
+        plt.text(0.5, 0.97, region_name, ha='center', va='top', fontsize=16, fontweight='bold', color='#333333', transform=fig.transFigure)
     
     if bot_username:
         ax.text(0.98, 0.02, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=ax.transAxes)
@@ -176,13 +177,17 @@ def _generate_list_view(
     ax.set_ylim(0, 1)
     ax.set_axis_off()
 
-    # Заголовок (трохи вище)
-    plt.text(0.5, 0.96, f"Графік відключень • {title}", ha='center', va='top', fontsize=18, fontweight='bold')
+    # Заголовок регіону (самий верх)
+    if region_name:
+        plt.text(0.5, 0.98, region_name, ha='center', va='top', fontsize=16, fontweight='bold', color='#333333')
     
-    y_pos = 0.75 # Починаємо нижче, щоб не наповзало на заголовок
+    # Підзаголовок
+    plt.text(0.5, 0.88, f"Графік відключень • {title}", ha='center', va='top', fontsize=14, fontweight='bold', color='#555555')
+    
+    y_pos = 0.65 # Починаємо нижче, щоб не наповзало на заголовок
     
     if not intervals:
-        plt.text(0.5, 0.5, f"{current_dt.strftime('%d.%m.%Y')}\nВідключень не заплановано", 
+        plt.text(0.5, 0.40, f"{current_dt.strftime('%d.%m.%Y')}\nВідключень не заплановано", 
                  ha='center', va='center', fontsize=16, color='green', fontweight='bold')
     else:
         # Дата (вище першого інтервалу)
@@ -220,9 +225,6 @@ def _generate_list_view(
 
     if show_time_marker:
         plt.text(0.05, 0.02, f"Станом на {current_dt.strftime('%H:%M')}", fontsize=9, color='grey', transform=ax.transAxes)
-
-    if region_name:
-        plt.text(0.5, 0.93, region_name, ha='center', va='top', fontsize=12, fontweight='bold', color='#555555')
 
     if bot_username:
         plt.text(0.98, 0.02, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=ax.transAxes)
