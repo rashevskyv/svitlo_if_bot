@@ -201,6 +201,31 @@ class SvitloApiClient:
         """
         return REGIONS
 
+    async def get_active_regions(self) -> Dict[str, str]:
+        """
+        Повертає список регіонів, які мають хоча б одну чергу з розкладом.
+        """
+        now = time.time()
+        if not self._cached_data or (now - self._last_fetch_time) > self._cache_ttl:
+            await self._refresh_cache()
+            
+        if not self._cached_data:
+            return REGIONS # Fallback
+            
+        active_cpus = set()
+        for r in self._cached_data.get("regions", []):
+            if r.get("schedule"):
+                active_cpus.add(r.get("cpu"))
+        
+        # Фільтруємо REGIONS за допомогою API_REGION_MAP та active_cpus
+        filtered = {}
+        for reg_id, reg_name in REGIONS.items():
+            api_key = API_REGION_MAP.get(reg_id, reg_id)
+            if api_key in active_cpus:
+                filtered[reg_id] = reg_name
+        
+        return filtered if filtered else REGIONS
+
     @staticmethod
     def get_status_at_time(schedule_data: dict, dt: datetime) -> str:
         """

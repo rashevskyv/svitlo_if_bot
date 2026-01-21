@@ -41,7 +41,7 @@ MACRO_GROUPS_KEYWORDS = {
 
 async def get_grouped_regions():
     """Групує всі доступні області з api_client за макрорегіонами."""
-    all_regions = await api_client.get_regions()
+    all_regions = await api_client.get_active_regions()
     grouped = {group: {} for group in MACRO_GROUPS_KEYWORDS}
     grouped["Інші"] = {}
     
@@ -102,7 +102,7 @@ async def process_macro_region(message: Message, state: FSMContext):
         grouped = await get_grouped_regions()
         await state.update_data(grouped_regions=grouped)
 
-    all_regions = await api_client.get_regions()
+    all_regions = await api_client.get_active_regions()
     
     # 1. Перевірка, чи це макрорегіон
     if user_input in grouped:
@@ -156,7 +156,7 @@ async def process_region(message: Message, state: FSMContext):
     data = await state.get_data()
     regions = data.get("regions")
     if not regions:
-        regions = await api_client.get_regions()
+        regions = await api_client.get_active_regions()
         await state.update_data(regions=regions)
     
     # Шукаємо ID регіону за назвою (точний збіг або підрядок)
@@ -237,7 +237,12 @@ async def process_queue(message: Message, state: FSMContext):
             ignored_queues.append(q["id"])
     
     if not valid_queues:
-        await message.answer("Не вдалося знайти розклад для жодної з вказаних черг. Перевірте правильність вводу та спробуйте ще раз.")
+        buttons = [[KeyboardButton(text="⬅️ Назад")]]
+        keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+        await message.answer(
+            "Не вдалося знайти розклад для жодної з вказаних черг. Перевірте правильність вводу та спробуйте ще раз.",
+            reply_markup=keyboard
+        )
         return
     
     # Зберігаємо користувача
@@ -412,24 +417,6 @@ async def process_reminder_time(message: Message, state: FSMContext):
     
     await state.clear()
 
-# Глобальний обробник для незареєстрованих користувачів
-@router.message()
-async def global_handler(message: Message, state: FSMContext):
-    user = await get_user(message.from_user.id)
-    if not user:
-        _LOGGER.info(f"Unregistered user {message.from_user.id} sent message: {message.text}. Redirecting to /start")
-        await cmd_start(message, state)
-        return
-    
-    # Якщо користувач зареєстрований, але ми тут - значить він натиснув щось не те або стан збився
-    if message.text == "⬅️ Назад":
-        await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
-        await state.clear()
-        return
-
-    # Якщо це просто текст, який ми не знаємо як обробити
-    await message.answer("Я вас не зрозумів. Будь ласка, скористайтеся кнопками меню.", reply_markup=get_main_keyboard())
-
 async def send_schedule(target: Any, tg_id: int):
     """
     Універсальна функція для відправки графіку.
@@ -579,6 +566,15 @@ async def global_handler(message: Message, state: FSMContext):
     user = await get_user(message.from_user.id)
     text = message.text or ""
     
+    # Якщо користувач натиснув "Назад" у невідомому стані
+    if text == "⬅️ Назад":
+        if user:
+            await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
+        else:
+            await cmd_start(message, state)
+        await state.clear()
+        return
+
     # Якщо бот не розуміє — робимо /start (перезапуск реєстрації/меню)
     _LOGGER.info(f"Confused user {message.from_user.id} sent: {text}. Redirecting to /start as requested.")
     await state.clear()
