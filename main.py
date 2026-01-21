@@ -167,6 +167,34 @@ async def main():
     # Реєстрація роутерів
     dp.include_router(registration.router)
     
+    # Глобальний обробник помилок
+    from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+    from aiogram.types import ErrorEvent
+    
+    @dp.error()
+    async def global_error_handler(event: ErrorEvent):
+        exception = event.exception
+        if isinstance(exception, TelegramForbiddenError) or (isinstance(exception, TelegramBadRequest) and "chat not found" in str(exception).lower()):
+            tg_id = None
+            if event.update.message:
+                tg_id = event.update.message.from_user.id
+            elif event.update.callback_query:
+                tg_id = event.update.callback_query.from_user.id
+            
+            if tg_id:
+                _LOGGER.warning(f"User {tg_id} blocked the bot or chat not found. Removing from DB.")
+                from database.db import DB_PATH
+                import aiosqlite
+                async with aiosqlite.connect(DB_PATH) as db:
+                    await db.execute("DELETE FROM users WHERE telegram_id = ?", (tg_id,))
+                    await db.commit()
+            else:
+                _LOGGER.warning(f"Telegram error (Forbidden/NotFound) but user ID not found in update: {exception}")
+            return True # Помилка оброблена
+        
+        _LOGGER.error(f"Unhandled exception: {exception}", exc_info=True)
+        return False
+    
     # Налаштування планувальника
     _LOGGER.info(f"Starting scheduler with interval {CHECK_INTERVAL} minutes (aligned to absolute time)")
     scheduler.add_job(check_updates, "cron", minute=f"*/{CHECK_INTERVAL}")
