@@ -176,7 +176,8 @@ def _generate_list_view(
         intervals.append((start_time, 48))
 
     # Розрахунок висоти (завжди квадрат 8x8)
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig = plt.figure(figsize=(8, 8))
+    ax = fig.add_axes([0.05, 0.05, 0.9, 0.9])
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.set_axis_off()
@@ -235,11 +236,11 @@ def _generate_list_view(
              transform=ax.transAxes)
 
     if show_time_marker:
-        plt.text(0.05, 0.02, f"Станом на {current_dt.strftime('%H:%M')}", fontsize=9, color='grey', transform=ax.transAxes)
+        plt.text(0.01, 0.01, f"Станом на {current_dt.strftime('%H:%M')}", fontsize=9, color='grey', transform=ax.transAxes, ha='left', va='bottom')
 
     if bot_username:
-        # Переносимо в самий нижній кут з невеликою підкладкою для читабельності
-        plt.text(0.99, 0.01, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=fig.transFigure,
+        # Вирівнюємо по горизонталі з "Станом на"
+        plt.text(0.99, 0.01, f"@{bot_username.replace('@', '')}", ha='right', va='bottom', fontsize=9, color='grey', transform=ax.transAxes,
                  bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=1))
 
     buf = BytesIO()
