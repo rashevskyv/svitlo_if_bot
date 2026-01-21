@@ -84,6 +84,8 @@ class SvitloApiClient:
         self._cached_data = None
         self._last_fetch_time = 0
         self._cache_ttl = cache_ttl # seconds
+        self._etag = None
+        self._region_hashes = {} # region_cpu -> hash
         self._initialized = True
 
     async def fetch_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
@@ -91,19 +93,14 @@ class SvitloApiClient:
         Отримує розклад для вказаної черги. Використовує кеш, якщо він актуальний.
         """
         now = time.time()
+        # Якщо кеш застарів, пробуємо оновити
         if not self._cached_data or (now - self._last_fetch_time) > self._cache_ttl:
-            _LOGGER.info(f"Cache miss or expired for {region}/{queue}. Refreshing...")
             await self._refresh_cache()
-        else:
-            _LOGGER.info(f"Cache hit for {region}/{queue}")
             
         if not self._cached_data:
-            _LOGGER.error("No cached data available after refresh")
             return None
             
-        # Визначаємо правильний ключ регіону
         api_region_key = API_REGION_MAP.get(region, region)
-        
         regions_list = self._cached_data.get("regions", [])
         region_obj = next((r for r in regions_list if r.get("cpu") == api_region_key), None)
         
@@ -128,35 +125,65 @@ class SvitloApiClient:
             "is_emergency": region_obj.get("emergency", False)
         }
 
-    async def _refresh_cache(self):
-        """Завантажує повний JSON з API та оновлює кеш."""
+    async def _refresh_cache(self) -> list[str]:
+        """
+        Завантажує повний JSON з API та оновлює кеш.
+        Повертає список CPU регіонів, які змінилися.
+        """
+        import hashlib
         close_session = False
         if self._session is None:
             self._session = aiohttp.ClientSession()
             close_session = True
 
+        changed_regions = []
         _LOGGER.info("Refreshing global API cache...")
         try:
             url_with_cache_bust = f"{DTEK_API_URL}?t={int(time.time())}"
             headers = {
-                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Cache-Control": "no-cache",
                 "Pragma": "no-cache",
-                "Expires": "0"
             }
+            if self._etag:
+                headers["If-None-Match"] = self._etag
+
             async with self._session.get(url_with_cache_bust, headers=headers, timeout=30) as resp:
+                if resp.status == 304:
+                    _LOGGER.info("API returned 304 Not Modified. Using cache.")
+                    self._last_fetch_time = time.time()
+                    return []
+
                 if resp.status != 200:
                     _LOGGER.error(f"HTTP {resp.status} for {DTEK_API_URL}")
-                    return
+                    return []
                 
+                self._etag = resp.headers.get("ETag")
                 raw_response = await resp.json(content_type=None)
                 body_str = raw_response.get("body")
                 if not body_str:
                     _LOGGER.error("API response missing 'body'")
-                    return
+                    return []
                 
-                self._cached_data = json.loads(body_str)
+                new_data = json.loads(body_str)
+                
+                # Визначаємо змінені регіони
+                new_regions = new_data.get("regions", [])
+                for r in new_regions:
+                    cpu = r.get("cpu")
+                    # Хешуємо тільки розклад та статус аварії
+                    r_content = json.dumps({
+                        "schedule": r.get("schedule"),
+                        "emergency": r.get("emergency")
+                    }, sort_keys=True)
+                    r_hash = hashlib.md5(r_content.encode()).hexdigest()
+                    
+                    if self._region_hashes.get(cpu) != r_hash:
+                        changed_regions.append(cpu)
+                        self._region_hashes[cpu] = r_hash
+                
+                self._cached_data = new_data
                 self._last_fetch_time = time.time()
-                _LOGGER.info("Global API cache refreshed successfully")
+                _LOGGER.info(f"Global API cache refreshed. Changed regions: {len(changed_regions)}")
 
         except Exception as e:
             _LOGGER.error(f"Error refreshing cache: {e}")
@@ -164,6 +191,8 @@ class SvitloApiClient:
             if close_session:
                 await self._session.close()
                 self._session = None
+        
+        return changed_regions
 
     async def get_regions(self) -> Dict[str, str]:
         """

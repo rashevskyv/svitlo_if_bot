@@ -87,3 +87,31 @@ async def get_users_by_queue(region_id: str, queue_id: str) -> List[int]:
                     if q_json == queue_id:
                         matching_users.append(tg_id)
             return matching_users
+
+async def get_unique_queues_by_region(region_id: str) -> List[str]:
+    """
+    Повертає список всіх унікальних ID черг, які використовуються користувачами в цьому регіоні.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT queue_id FROM users WHERE region_id = ?", (region_id,)) as cursor:
+            rows = await cursor.fetchall()
+            unique_queues = set()
+            for (q_json,) in rows:
+                try:
+                    queues = json.loads(q_json)
+                    if isinstance(queues, list):
+                        for q in queues:
+                            unique_queues.add(q["id"])
+                    else:
+                        unique_queues.add(str(q_json))
+                except:
+                    unique_queues.add(str(q_json))
+            return list(unique_queues)
+
+async def get_users_by_region(region_id: str) -> List[Tuple]:
+    """
+    Повертає всіх користувачів конкретного регіону.
+    """
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode FROM users WHERE region_id = ?", (region_id,)) as cursor:
+            return await cursor.fetchall()

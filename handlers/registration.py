@@ -316,9 +316,10 @@ async def process_display_mode(message: Message, state: FSMContext):
 async def send_schedule(target: Any, tg_id: int):
     """
     Універсальна функція для відправки графіку.
-    target може бути Message або Bot.
+    Використовує ImageCache для classic/list режимів.
     """
     from services.image_generator import generate_schedule_image, convert_api_to_half_list, get_next_event_info
+    from services.image_cache import ImageCache
     from aiogram import Bot
     from aiogram.types import Message
     import hashlib
@@ -340,14 +341,14 @@ async def send_schedule(target: Any, tg_id: int):
     try:
         queues = json.loads(queue_id_json)
         if not isinstance(queues, list):
-            # If it's a single value (like 5.2), wrap it in the expected list format
             queues = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
     except:
-        # Fallback for old data
         queues = [{"id": queue_id_json, "alias": queue_id_json}]
     
     media = []
     all_schedules = {}
+    img_cache = ImageCache()
+    now_dt = datetime.now()
     
     for q in queues:
         schedule_data = await api_client.fetch_schedule(region_id, q["id"])
@@ -355,33 +356,55 @@ async def send_schedule(target: Any, tg_id: int):
             continue
             
         all_schedules[q["id"]] = schedule_data["schedule"]
+        sched_hash = hashlib.md5(json.dumps(schedule_data["schedule"], sort_keys=True).encode()).hexdigest()
         
-        today_data = schedule_data["schedule"].get(schedule_data["date_today"], {})
-        tomorrow_data = schedule_data["schedule"].get(schedule_data["date_tomorrow"], {})
-        
-        today_half = convert_api_to_half_list(today_data)
-        tomorrow_half = convert_api_to_half_list(tomorrow_data)
-        
-        # Перевірка чи є відключення завтра (для classic та list)
-        has_tomorrow_outages = "off" in tomorrow_half
-        
-        # В режимі dynamic ми завжди показуємо 24 години вперед
-        # В інших режимах приховуємо завтра, якщо там немає відключень
-        if mode in ["classic", "list"] and not has_tomorrow_outages:
-            tomorrow_half_for_gen = []
+        # Спробуємо взяти з кешу (тільки для classic та list)
+        cached_images = None
+        if mode in ["classic", "list"]:
+            cached_images = img_cache.get(region_id, q["id"], mode, sched_hash)
+            
+        if cached_images:
+            _LOGGER.debug(f"Cache hit for {region_id}/{q['id']} ({mode})")
+            images_to_send = cached_images
         else:
-            tomorrow_half_for_gen = tomorrow_half
-        
-        images = generate_schedule_image(
-            today_half, tomorrow_half_for_gen, datetime.now(), mode, q["alias"]
-        )
+            _LOGGER.debug(f"Cache miss for {region_id}/{q['id']} ({mode})")
+            today_data = schedule_data["schedule"].get(schedule_data["date_today"], {})
+            tomorrow_data = schedule_data["schedule"].get(schedule_data["date_tomorrow"], {})
+            
+            today_half = convert_api_to_half_list(today_data)
+            tomorrow_half = convert_api_to_half_list(tomorrow_data)
+            
+            # В режимі dynamic ми завжди показуємо 24 години вперед
+            # В інших режимах приховуємо завтра, якщо там немає відключень
+            if mode in ["classic", "list"] and "off" not in tomorrow_half:
+                tomorrow_half_for_gen = []
+            else:
+                tomorrow_half_for_gen = tomorrow_half
+            
+            # Для dynamic завжди показуємо маркер часу. 
+            # Для інших - ні (вони кешуються без маркера).
+            show_marker = (mode == "dynamic")
+            
+            images_to_send = generate_schedule_image(
+                today_half, tomorrow_half_for_gen, now_dt, mode, q["alias"], show_time_marker=show_marker
+            )
+            
+            # Кешуємо, якщо це не dynamic
+            if mode in ["classic", "list"]:
+                img_cache.set(region_id, q["id"], mode, sched_hash, images_to_send)
 
-        forecast_text = get_next_event_info(today_half, tomorrow_half, datetime.now())
+        # Формуємо текстовий прогноз
+        today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
+        tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
+        forecast_text = get_next_event_info(today_half, tomorrow_half, now_dt)
         
-        for i, img_buf in enumerate(images):
+        # Додаємо час запиту в підпис
+        timestamp_str = now_dt.strftime("%H:%M")
+        
+        for i, img_buf in enumerate(images_to_send):
             photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{q['id']}_{i}.png")
             # Додаємо підпис тільки до першого фото кожної черги
-            caption = f"📍 **{q['alias']}**\n{forecast_text}" if i == 0 else None
+            caption = f"📍 **{q['alias']}**\n{forecast_text}\n\n🕒 _Запитано о {timestamp_str}_" if i == 0 else None
             media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
 
     if not media:
@@ -389,14 +412,13 @@ async def send_schedule(target: Any, tg_id: int):
             await target.answer("Не вдалося отримати розклад для жодної з ваших черг.")
         return
 
-    # Оновлюємо хеш користувача (об'єднаний хеш всіх розкладів)
+    # Оновлюємо хеш користувача
     sched_str = json.dumps(all_schedules, sort_keys=True)
     new_hash = hashlib.md5(sched_str.encode()).hexdigest()
     await update_user_hash(tg_id, new_hash)
 
     if isinstance(target, Message):
         if len(media) > 1:
-            # Aiogram has a limit of 10 items per media group
             for i in range(0, len(media), 10):
                 await target.answer_media_group(media[i:i+10])
             await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard())

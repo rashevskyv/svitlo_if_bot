@@ -50,71 +50,97 @@ session = None
 async def check_updates():
     """
     Періодична перевірка оновлень розкладу.
+    Оптимізовано: спочатку перевіряємо змінені регіони, потім сповіщаємо користувачів.
     """
+    from database.db import get_users_by_region, get_unique_queues_by_region
+    from services.image_cache import ImageCache
+    from services.image_generator import generate_schedule_image, convert_api_to_half_list
+    
     _LOGGER.info("Checking for updates...")
-    users = await get_all_users()
+    changed_region_cpus = await api_client._refresh_cache()
     
-    # Кешуємо результати API за (region, queue)
-    cache = {}
+    if not changed_region_cpus:
+        _LOGGER.info("No regions changed.")
+        return
+
+    img_cache = ImageCache()
     
-    for user in users:
-        # user: (tg_id, region_id, queue_id_json, last_hash, mode)
-        tg_id, region_id, queue_id_json, last_hash, mode = user
-        
-        try:
-            queues = json.loads(queue_id_json)
-            if not isinstance(queues, list):
-                queues = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
-        except:
-            # Fallback for old data
-            queues = [{"id": queue_id_json, "alias": queue_id_json}]
-        
-        user_schedules = {}
-        skip_user = False
-        
-        for q in queues:
-            q_id = q["id"]
-            cache_key = (region_id, q_id)
-            if cache_key not in cache:
-                schedule_data = await api_client.fetch_schedule(region_id, q_id)
-                if schedule_data:
-                    cache[cache_key] = schedule_data
-                else:
-                    # If any queue fails, we might want to skip or continue with others
-                    # For now, let's just skip this queue
-                    continue
-            
-            if cache_key in cache:
-                user_schedules[q_id] = cache[cache_key]["schedule"]
-        
-        if not user_schedules:
+    # Словник для мапінгу CPU -> region_id (з REGIONS)
+    cpu_to_region_id = {API_REGION_MAP.get(rid, rid): rid for rid in REGIONS.keys()}
+
+    for cpu in changed_region_cpus:
+        region_id = cpu_to_region_id.get(cpu)
+        if not region_id:
+            _LOGGER.warning(f"Changed region CPU '{cpu}' not found in REGIONS map")
             continue
             
-        # Створюємо хеш всіх розкладів користувача
-        sched_str = json.dumps(user_schedules, sort_keys=True)
-        new_hash = hashlib.md5(sched_str.encode()).hexdigest()
+        _LOGGER.info(f"Region '{region_id}' changed. Processing updates...")
         
-        if new_hash != last_hash:
-            dates = []
-            for q_id, sched in user_schedules.items():
-                dates.extend(sched.keys())
-            unique_dates = sorted(list(set(dates)))
-            _LOGGER.info(f"Schedule changed for user {tg_id}. Dates in schedule: {unique_dates}")
+        # 1. Очищуємо старий кеш зображень для цього регіону
+        img_cache.clear_region(region_id)
+        
+        # 2. Знаходимо всі унікальні черги в цьому регіоні
+        unique_queues = await get_unique_queues_by_region(region_id)
+        _LOGGER.info(f"Pre-generating images for {len(unique_queues)} queues in {region_id}")
+        
+        # 3. Попередньо генеруємо зображення для всіх черг (classic та list)
+        # Це робиться один раз на регіон, а не для кожного користувача
+        for q_id in unique_queues:
+            schedule_data = await api_client.fetch_schedule(region_id, q_id)
+            if not schedule_data: continue
             
+            today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
+            tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
+            
+            # Хеш розкладу для ключа кешу
+            sched_hash = hashlib.md5(json.dumps(schedule_data["schedule"], sort_keys=True).encode()).hexdigest()
+            
+            for mode in ["classic", "list"]:
+                # Для кешу генеруємо БЕЗ часової відмітки
+                images = generate_schedule_image(
+                    today_half, tomorrow_half, datetime.now(), mode, q_id, show_time_marker=False
+                )
+                img_cache.set(region_id, q_id, mode, sched_hash, images)
+
+        # 4. Сповіщаємо користувачів цього регіону
+        users = await get_users_by_region(region_id)
+        for user in users:
+            tg_id, _, queue_id_json, last_hash, mode = user
+            
+            # Отримуємо актуальні розклади для всіх черг користувача
             try:
-                await bot.send_message(tg_id, "🔔 Розклад оновився!")
-                await send_schedule(bot, tg_id)
-            except Exception as e:
-                err_msg = str(e)
-                if "Forbidden: bot was blocked by the user" in err_msg or "chat not found" in err_msg:
-                    _LOGGER.warning(f"User {tg_id} blocked the bot or chat not found. Removing from DB.")
-                    from database.db import DB_PATH
-                    import aiosqlite
-                    async with aiosqlite.connect(DB_PATH) as db:
-                        await db.execute("DELETE FROM users WHERE telegram_id = ?", (tg_id,))
-                        await db.commit()
-                else:
-                    _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
+                queues = json.loads(queue_id_json)
+                if not isinstance(queues, list):
+                    queues = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
+            except:
+                queues = [{"id": queue_id_json, "alias": queue_id_json}]
+            
+            user_schedules = {}
+            for q in queues:
+                s_data = await api_client.fetch_schedule(region_id, q["id"])
+                if s_data:
+                    user_schedules[q["id"]] = s_data["schedule"]
+            
+            if not user_schedules: continue
+            
+            new_hash = hashlib.md5(json.dumps(user_schedules, sort_keys=True).encode()).hexdigest()
+            
+            if new_hash != last_hash:
+                _LOGGER.info(f"Notifying user {tg_id} about schedule change")
+                try:
+                    await bot.send_message(tg_id, "🔔 Розклад оновився!")
+                    await send_schedule(bot, tg_id)
+                except Exception as e:
+                    err_msg = str(e)
+                    if "Forbidden: bot was blocked by the user" in err_msg or "chat not found" in err_msg:
+                        _LOGGER.warning(f"User {tg_id} blocked the bot. Removing from DB.")
+                        from database.db import DB_PATH
+                        import aiosqlite
+                        async with aiosqlite.connect(DB_PATH) as db:
+                            await db.execute("DELETE FROM users WHERE telegram_id = ?", (tg_id,))
+                            await db.commit()
+                    else:
+                        _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
 
 async def main():
     global api_client, session

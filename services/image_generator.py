@@ -18,7 +18,8 @@ def generate_schedule_image(
     tomorrow_half: List[str], 
     current_dt: datetime, 
     mode: str = "classic",
-    queue_id: str = "Unknown"
+    queue_id: str = "Unknown",
+    show_time_marker: bool = True
 ) -> List[BytesIO]:
     """
     Головна функція генерації зображень залежно від режиму.
@@ -27,19 +28,19 @@ def generate_schedule_image(
     images = []
     
     if mode == "list":
-        images.append(_generate_list_view(today_half, current_dt, queue_id, "Сьогодні"))
+        images.append(_generate_list_view(today_half, current_dt, queue_id, "Сьогодні", show_time_marker))
         if tomorrow_half and len(tomorrow_half) == 48:
             tomorrow_dt = current_dt + timedelta(days=1)
-            images.append(_generate_list_view(tomorrow_half, tomorrow_dt, queue_id, "Завтра"))
+            images.append(_generate_list_view(tomorrow_half, tomorrow_dt, queue_id, "Завтра", show_time_marker))
     elif mode == "dynamic":
         # Динамічний режим за своєю суттю об'єднує 24 години від зараз
-        images.append(_generate_circle_view(today_half, tomorrow_half, current_dt, queue_id, dynamic=True))
+        images.append(_generate_circle_view(today_half, tomorrow_half, current_dt, queue_id, dynamic=True, show_time_marker=True))
     else:
         # Класичне коло - два окремих зображення
-        images.append(_generate_circle_view(today_half, [], current_dt, queue_id, dynamic=False, title="Сьогодні"))
+        images.append(_generate_circle_view(today_half, [], current_dt, queue_id, dynamic=False, title="Сьогодні", show_time_marker=show_time_marker))
         if tomorrow_half and len(tomorrow_half) == 48:
             tomorrow_dt = current_dt + timedelta(days=1)
-            images.append(_generate_circle_view(tomorrow_half, [], tomorrow_dt, queue_id, dynamic=False, title="Завтра"))
+            images.append(_generate_circle_view(tomorrow_half, [], tomorrow_dt, queue_id, dynamic=False, title="Завтра", show_time_marker=show_time_marker))
             
     return images
 
@@ -49,7 +50,8 @@ def _generate_circle_view(
     current_dt: datetime, 
     queue_id: str,
     dynamic: bool = False,
-    title: str = "Сьогодні"
+    title: str = "Сьогодні",
+    show_time_marker: bool = True
 ) -> BytesIO:
     """
     Генерує одну кругову діаграму.
@@ -97,7 +99,7 @@ def _generate_circle_view(
                 fontsize=11, fontweight='bold', color=COLOR_TEXT_WHITE)
 
     # Стрілка поточного часу
-    if not dynamic or title == "Прогноз (24 год)":
+    if show_time_marker:
         current_angle = 90 - (current_dt.hour * 15 + current_dt.minute * 0.25)
         r_start, r_end = 0.55, 1.05
         x_s = r_start * np.cos(np.radians(current_angle))
@@ -131,7 +133,8 @@ def _generate_list_view(
     half_list: List[str], 
     current_dt: datetime, 
     queue_id: str,
-    title: str = "Сьогодні"
+    title: str = "Сьогодні",
+    show_time_marker: bool = True
 ) -> BytesIO:
     """
     Генерує текстову картку зі списком відключень для одного дня.
@@ -190,13 +193,20 @@ def _generate_list_view(
                      ha='left', va='center', bbox=dict(facecolor='white', edgecolor='#C2185B', boxstyle='round,pad=0.3'))
             
             y_pos -= 0.15 # Збільшений крок для "повітря"
-
+            
     # Номер черги в нижньому правому куті (без слова "Черга")
     plt.text(0.95, 0.05, f"{queue_id}", ha='right', va='bottom', fontsize=16, fontweight='bold', 
              bbox=dict(facecolor=COLOR_ACCENT, alpha=0.8, edgecolor='none', boxstyle='round,pad=0.5'), color='white',
              transform=ax.transAxes)
 
-    plt.text(0.05, 0.02, f"Станом на {current_dt.strftime('%H:%M')}", fontsize=9, color='grey', transform=ax.transAxes)
+    if show_time_marker:
+        plt.text(0.05, 0.02, f"Станом на {current_dt.strftime('%H:%M')}", fontsize=9, color='grey', transform=ax.transAxes)
+
+    buf = BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
+    buf.seek(0)
+    plt.close(fig)
+    return buf
 
     buf = BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=120)
