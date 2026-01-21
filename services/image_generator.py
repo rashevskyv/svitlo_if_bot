@@ -183,22 +183,22 @@ def _generate_list_view(
 
     # Заголовок регіону (самий верх)
     if region_name:
-        plt.text(0.5, 0.98, region_name, ha='center', va='top', fontsize=16, fontweight='bold', color='#333333')
+        plt.text(0.5, 0.97, region_name, ha='center', va='top', fontsize=16, fontweight='bold', color='#333333', transform=ax.transAxes)
     
     # Підзаголовок
-    plt.text(0.5, 0.91, f"Графік відключень • {title}", ha='center', va='top', fontsize=14, fontweight='bold', color='#555555')
+    plt.text(0.5, 0.90, f"Графік відключень • {title}", ha='center', va='top', fontsize=14, fontweight='bold', color='#555555', transform=ax.transAxes)
     
-    y_pos = 0.70 # Починаємо нижче, щоб не наповзало на заголовок
+    y_pos = 0.65 # Починаємо нижче, щоб не наповзало на заголовок
     
     if not intervals:
         plt.text(0.5, 0.45, f"{current_dt.strftime('%d.%m.%Y')}\nВідключень не заплановано", 
-                 ha='center', va='center', fontsize=16, color='green', fontweight='bold')
+                 ha='center', va='center', fontsize=16, color='green', fontweight='bold', transform=ax.transAxes)
     else:
         # Дата (вище першого інтервалу)
-        plt.text(0.05, y_pos + 0.12, f"{current_dt.strftime('%d.%m.%Y')}", fontsize=14, fontweight='bold', color='#333333')
+        plt.text(0.05, y_pos + 0.12, f"{current_dt.strftime('%d.%m.%Y')}", fontsize=14, fontweight='bold', color='#333333', transform=ax.transAxes)
         
         # Динамічний крок залежно від кількості інтервалів
-        step = min(0.15, 0.55 / len(intervals)) if intervals else 0.15
+        step = min(0.14, 0.50 / len(intervals)) if intervals else 0.15
         
         for start, end in intervals:
             s_h, s_m = divmod(start * 30, 60)
@@ -216,19 +216,21 @@ def _generate_list_view(
             # Плашка інтервалу
             rect = patches.FancyBboxPatch((0.05, y_pos - box_h/2), 0.6, box_h, 
                                           facecolor='#C2185B', edgecolor='none', 
-                                          boxstyle='round,pad=0.02')
+                                          boxstyle='round,pad=0.02', transform=ax.transAxes)
             ax.add_patch(rect)
             
-            plt.text(0.15, y_pos, f"{s_h:02d}:{s_m:02d}", color='white', fontsize=font_s, fontweight='bold', ha='center', va='center')
-            plt.text(0.35, y_pos, "———", color='white', fontsize=font_s, ha='center', va='center')
-            plt.text(0.55, y_pos, f"{e_h:02d}:{e_m:02d}", color='white', fontsize=font_s, fontweight='bold', ha='center', va='center')
+            plt.text(0.15, y_pos, f"{s_h:02d}:{s_m:02d}", color='white', fontsize=font_s, fontweight='bold', ha='center', va='center', transform=ax.transAxes)
+            plt.text(0.35, y_pos, "———", color='white', fontsize=font_s, ha='center', va='center', transform=ax.transAxes)
+            plt.text(0.55, y_pos, f"{e_h:02d}:{e_m:02d}", color='white', fontsize=font_s, fontweight='bold', ha='center', va='center', transform=ax.transAxes)
             
             # Тривалість
             plt.text(0.75, y_pos, dur_str, color='#C2185B', fontsize=font_s - 2, fontweight='bold', 
-                     ha='left', va='center', bbox=dict(facecolor='white', edgecolor='#C2185B', boxstyle='round,pad=0.3'))
+                     ha='left', va='center', bbox=dict(facecolor='white', edgecolor='#C2185B', boxstyle='round,pad=0.3'), transform=ax.transAxes)
             
-    # Номер черги в нижньому правому куті (без слова "Черга")
-    plt.text(0.95, 0.05, f"{queue_id}", ha='right', va='bottom', fontsize=16, fontweight='bold', 
+            y_pos -= step * 1.2 if len(intervals) <= 3 else step
+            
+    # Номер черги в нижньому правому куті (піднято, щоб не заважати тегу)
+    plt.text(0.95, 0.12, f"{queue_id}", ha='right', va='bottom', fontsize=16, fontweight='bold', 
              bbox=dict(facecolor=COLOR_ACCENT, alpha=0.8, edgecolor='none', boxstyle='round,pad=0.5'), color='white',
              transform=ax.transAxes)
 
