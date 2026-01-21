@@ -1,3 +1,6 @@
 [submodule "external/svitlo_live"]
 	path = external/svitlo_live
 	url = https://github.com/chaichuk/svitlo_live
+[submodule "external/temno"]
+	path = external/temno
+	url = https://github.com/alk3mist/temno.git
