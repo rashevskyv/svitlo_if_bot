@@ -18,6 +18,22 @@ async def init_db():
         """)
         await db.commit()
 
+        # Міграції для існуючих БД
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN display_mode TEXT DEFAULT 'classic'")
+        except aiosqlite.OperationalError:
+            pass
+            
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN reminder_minutes INTEGER DEFAULT 0")
+        except aiosqlite.OperationalError:
+            pass
+
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN last_reminder_at TEXT")
+        except aiosqlite.OperationalError:
+            pass
+            
         await db.commit()
 
 async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[Dict[str, str]]):
