@@ -85,12 +85,22 @@ def _generate_circle_view(
 
     fig, ax = plt.subplots(figsize=(8, 8), subplot_kw=dict(aspect="equal"))
     
-    # Малюємо кільце (без внутрішніх ліній для кращої читаємості)
+    # Малюємо кільце без внутрішніх ліній (спочатку суцільне)
     ax.pie(sizes, colors=colors, startangle=90, counterclock=False, 
            wedgeprops=dict(width=0.4, edgecolor='none', linewidth=0))
 
-    # Додаємо цифри годин
+    # Додаємо розділювачі годин (24 лінії)
     for i in range(24):
+        angle = 90 - i * 15
+        r_in, r_out = 0.6, 1.0
+        x_in = r_in * np.cos(np.radians(angle))
+        y_in = r_in * np.sin(np.radians(angle))
+        x_out = r_out * np.cos(np.radians(angle))
+        y_out = r_out * np.sin(np.radians(angle))
+        ax.plot([x_in, x_out], [y_in, y_out], color='w', linewidth=0.5, zorder=3)
+
+    # Додаємо цифри годин (кожні 2 години для чистоти, як просив користувач "бачити 12")
+    for i in range(0, 24, 2):
         angle = 90 - (i * 15 + 7.5) 
         r = 0.8 
         x = r * np.cos(np.radians(angle))
