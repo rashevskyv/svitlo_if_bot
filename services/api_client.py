@@ -66,6 +66,10 @@ else:
     REGIONS = {"ivano-frankivska-oblast": "Івано-Франківська область"}
     API_REGION_MAP = {}
 
+IF_API_URL = "https://be-svitlo.oe.if.ua/schedule-by-queue"
+IF_QUEUES_URL = "https://be-svitlo.oe.if.ua/gpv-queue-list"
+IF_REGION_ID = "ivano-frankivska-oblast"
+
 _instance = None
 
 class SvitloApiClient:
@@ -126,10 +130,76 @@ class SvitloApiClient:
             "is_emergency": region_obj.get("emergency", False)
         }
 
+        return changed_regions
+
+    async def _fetch_if_schedule(self, queue: str) -> Optional[list]:
+        """Отримує сирі дані розкладу для конкретної черги ІФ."""
+        if self._session is None:
+            return None
+        try:
+            url = f"{IF_API_URL}?queue={queue}"
+            async with self._session.get(url, timeout=15) as resp:
+                if resp.status != 200:
+                    _LOGGER.error(f"IF API error {resp.status} for queue {queue}")
+                    return None
+                return await resp.json()
+        except Exception as e:
+            _LOGGER.error(f"Failed to fetch IF schedule for queue {queue}: {e}")
+            return None
+
+    def _parse_if_schedule(self, raw_data: list, queue: str) -> Dict[str, Dict[str, int]]:
+        """
+        Перетворює формат ІФ (інтервали) у формат бота (30-хвилинна сітка).
+        """
+        parsed = {}
+        for day_data in raw_data:
+            date_str = day_data.get("eventDate") # "28.01.2026"
+            if not date_str: continue
+            
+            # Конвертуємо DD.MM.YYYY в YYYY-MM-DD
+            try:
+                dt = datetime.strptime(date_str, "%d.%m.%Y")
+                iso_date = dt.date().isoformat()
+            except:
+                continue
+                
+            day_schedule = {}
+            # Ініціалізуємо сітку (0 - світло)
+            for h in range(24):
+                day_schedule[f"{h:02d}:00"] = 1
+                day_schedule[f"{h:02d}:30"] = 1
+            
+            # Заповнюємо відключення
+            intervals = day_data.get("queues", {}).get(queue, [])
+            for interval in intervals:
+                # interval: {"from": "06:00", "to": "10:30", "status": 1}
+                # status 1 зазвичай означає відключення на цьому сайті
+                start_str = interval.get("from")
+                end_str = interval.get("to")
+                if not start_str or not end_str: continue
+                
+                try:
+                    start_h, start_m = map(int, start_str.split(":"))
+                    end_h, end_m = map(int, end_str.split(":"))
+                    
+                    # Проходимо по 30-хвилинних слотах
+                    curr_h, curr_m = start_h, start_m
+                    while (curr_h < end_h) or (curr_h == end_h and curr_m < end_m):
+                        day_schedule[f"{curr_h:02d}:{curr_m:02d}"] = 2 # 2 - немає світла
+                        curr_m += 30
+                        if curr_m >= 60:
+                            curr_m = 0
+                            curr_h += 1
+                except Exception as e:
+                    _LOGGER.error(f"Error parsing interval {start_str}-{end_str}: {e}")
+                    
+            parsed[iso_date] = day_schedule
+        return parsed
+
     async def _refresh_cache(self) -> list[str]:
         """
         Завантажує повний JSON з API та оновлює кеш.
-        Повертає список CPU регіонів, які змінилися.
+        Також довантажує актуальні дані для Івано-Франківська.
         """
         import hashlib
         close_session = False
@@ -140,52 +210,46 @@ class SvitloApiClient:
         changed_regions = []
         _LOGGER.info("Refreshing global API cache...")
         try:
+            # 1. Отримуємо основні дані
             url_with_cache_bust = f"{DTEK_API_URL}?t={int(time.time())}"
-            headers = {
-                "Cache-Control": "no-cache",
-                "Pragma": "no-cache",
-            }
-            if self._etag:
-                headers["If-None-Match"] = self._etag
+            headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
+            if self._etag: headers["If-None-Match"] = self._etag
 
             async with self._session.get(url_with_cache_bust, headers=headers, timeout=30) as resp:
-                if resp.status == 304:
-                    _LOGGER.info("API returned 304 Not Modified. Using cache.")
-                    self._last_fetch_time = time.time()
-                    return []
+                if resp.status == 200:
+                    self._etag = resp.headers.get("ETag")
+                    raw_response = await resp.json(content_type=None)
+                    body_str = raw_response.get("body")
+                    if body_str:
+                        self._cached_data = json.loads(body_str)
+                elif resp.status == 304:
+                    _LOGGER.info("Global API returned 304.")
+                else:
+                    _LOGGER.error(f"Global API error {resp.status}")
 
-                if resp.status != 200:
-                    _LOGGER.error(f"HTTP {resp.status} for {DTEK_API_URL}")
-                    return []
+            if not self._cached_data:
+                return []
+
+            # 2. Окремо оновлюємо Івано-Франківськ
+            if IF_REGION_ID in REGIONS:
+                await self._update_if_region_data()
+
+            # 3. Визначаємо змінені регіони
+            for r in self._cached_data.get("regions", []):
+                cpu = r.get("cpu")
+                r_content = json.dumps({
+                    "schedule": r.get("schedule"),
+                    "emergency": r.get("emergency")
+                }, sort_keys=True)
+                r_hash = hashlib.md5(r_content.encode()).hexdigest()
                 
-                self._etag = resp.headers.get("ETag")
-                raw_response = await resp.json(content_type=None)
-                body_str = raw_response.get("body")
-                if not body_str:
-                    _LOGGER.error("API response missing 'body'")
-                    return []
-                
-                new_data = json.loads(body_str)
-                
-                # Визначаємо змінені регіони
-                new_regions = new_data.get("regions", [])
-                for r in new_regions:
-                    cpu = r.get("cpu")
-                    # Хешуємо тільки розклад та статус аварії
-                    r_content = json.dumps({
-                        "schedule": r.get("schedule"),
-                        "emergency": r.get("emergency")
-                    }, sort_keys=True)
-                    r_hash = hashlib.md5(r_content.encode()).hexdigest()
-                    
-                    if self._region_hashes.get(cpu) != r_hash:
-                        changed_regions.append(cpu)
-                        self._region_hashes[cpu] = r_hash
-                        self._pending_changes.add(cpu)
-                
-                self._cached_data = new_data
-                self._last_fetch_time = time.time()
-                _LOGGER.info(f"Global API cache refreshed. Changed regions: {len(changed_regions)}")
+                if self._region_hashes.get(cpu) != r_hash:
+                    changed_regions.append(cpu)
+                    self._region_hashes[cpu] = r_hash
+                    self._pending_changes.add(cpu)
+            
+            self._last_fetch_time = time.time()
+            _LOGGER.info(f"Cache refreshed. Changed regions: {len(changed_regions)}")
 
         except Exception as e:
             _LOGGER.error(f"Error refreshing cache: {e}")
@@ -195,6 +259,36 @@ class SvitloApiClient:
                 self._session = None
         
         return changed_regions
+
+    async def _update_if_region_data(self):
+        """Оновлює дані для регіону ІФ безпосередньо з їхнього сайту."""
+        api_region_key = API_REGION_MAP.get(IF_REGION_ID, IF_REGION_ID)
+        regions_list = self._cached_data.get("regions", [])
+        region_obj = next((r for r in regions_list if r.get("cpu") == api_region_key), None)
+        
+        if not region_obj: return
+
+        # Отримуємо список черг, які вже є в кеші (або всі можливі)
+        # Для ІФ черги зазвичай 1.1, 1.2, 2.1...
+        queues = list(region_obj.get("schedule", {}).keys())
+        if not queues:
+            # Якщо в глобальному API порожньо, спробуємо дефолтні або отримаємо з сайту
+            # Але поки що візьмемо ті, що є.
+            return
+
+        _LOGGER.info(f"Updating IF schedules for {len(queues)} queues...")
+        new_if_schedules = {}
+        for q in queues:
+            raw_if = await self._fetch_if_schedule(q)
+            if raw_if:
+                parsed_if = self._parse_if_schedule(raw_if, q)
+                if parsed_if:
+                    new_if_schedules[q] = parsed_if
+        
+        if new_if_schedules:
+            # Оновлюємо розклад у об'єкті регіону
+            region_obj["schedule"] = new_if_schedules
+            _LOGGER.info(f"Successfully updated IF schedules from direct source")
 
     def get_changed_regions(self, reset: bool = True) -> list[str]:
         """
