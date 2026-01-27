@@ -47,6 +47,34 @@ scheduler = AsyncIOScheduler()
 api_client = None
 session = None
 
+def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: datetime) -> bool:
+    """
+    Перевіряє, чи є зміни в розкладі релевантними для користувача залежно від режиму.
+    """
+    if not old_sched: return True # Перший запуск
+    
+    from services.image_generator import convert_api_to_half_list
+    
+    old_today = convert_api_to_half_list(old_sched["schedule"].get(old_sched["date_today"], {}))
+    new_today = convert_api_to_half_list(new_sched["schedule"].get(new_sched["date_today"], {}))
+    old_tomorrow = convert_api_to_half_list(old_sched["schedule"].get(old_sched["date_tomorrow"], {}))
+    new_tomorrow = convert_api_to_half_list(new_sched["schedule"].get(new_sched["date_tomorrow"], {}))
+    
+    current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
+    
+    if mode == "dynamic":
+        # Для "Прогнозу" релевантні зміни від зараз до кінця дня сьогодні
+        # ТА від початку дня до зараз завтра.
+        relevant_old = old_today[current_idx:] + old_tomorrow[:current_idx]
+        relevant_new = new_today[current_idx:] + new_tomorrow[:current_idx]
+        return relevant_old != relevant_new
+    else:
+        # Для classic та list релевантні зміни від зараз до кінця дня сьогодні
+        # ТА весь день завтра.
+        relevant_old = old_today[current_idx:] + old_tomorrow
+        relevant_new = new_today[current_idx:] + new_tomorrow
+        return relevant_old != relevant_new
+
 async def check_updates():
     """
     Періодична перевірка оновлень розкладу.
@@ -141,6 +169,21 @@ async def check_updates():
             new_hash = hashlib.md5(json.dumps(user_schedules, sort_keys=True).encode()).hexdigest()
             
             if new_hash != last_hash:
+                # Перевірка релевантності змін
+                is_relevant = False
+                now_dt = datetime.now()
+                for q in queues:
+                    old_s = await api_client.get_old_schedule(region_id, q["id"])
+                    new_s = await api_client.fetch_schedule(region_id, q["id"])
+                    if new_s and is_change_relevant(old_s, new_s, mode, now_dt):
+                        is_relevant = True
+                        break
+                
+                if not is_relevant and last_hash is not None:
+                    _LOGGER.info(f"Skipping notification for user {tg_id} (irrelevant changes for mode {mode})")
+                    await update_user_hash(tg_id, new_hash)
+                    continue
+
                 if last_hash is not None:
                     _LOGGER.info(f"Notifying user {tg_id} about schedule change")
                     try:

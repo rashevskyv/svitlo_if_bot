@@ -86,6 +86,7 @@ class SvitloApiClient:
             return
         self._session = session
         self._cached_data = None
+        self._old_cached_data = None
         self._last_fetch_time = 0
         self._cache_ttl = cache_ttl # seconds
         self._etag = None
@@ -119,6 +120,36 @@ class SvitloApiClient:
         schedule = (region_obj.get("schedule") or {}).get(queue) or {}
         if not schedule:
             _LOGGER.warning(f"No schedule found for queue {queue} in region {region}")
+            return None
+        
+        return {
+            "region": region,
+            "queue": queue,
+            "date_today": date_today,
+            "date_tomorrow": date_tomorrow,
+            "schedule": schedule,
+            "is_emergency": region_obj.get("emergency", False)
+        }
+
+    async def get_old_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
+        """
+        Повертає попередній розклад (до останнього оновлення кешу).
+        """
+        if not self._old_cached_data:
+            return None
+            
+        api_region_key = API_REGION_MAP.get(region, region)
+        regions_list = self._old_cached_data.get("regions", [])
+        region_obj = next((r for r in regions_list if r.get("cpu") == api_region_key), None)
+        
+        if not region_obj:
+            return None
+        
+        date_today = self._old_cached_data.get("date_today")
+        date_tomorrow = self._old_cached_data.get("date_tomorrow")
+        
+        schedule = (region_obj.get("schedule") or {}).get(queue) or {}
+        if not schedule:
             return None
         
         return {
@@ -209,6 +240,12 @@ class SvitloApiClient:
 
         changed_regions = []
         _LOGGER.info("Refreshing global API cache...")
+        
+        # Зберігаємо попередній стан перед оновленням
+        if self._cached_data:
+            import copy
+            self._old_cached_data = copy.deepcopy(self._cached_data)
+            
         try:
             # 1. Отримуємо основні дані
             url_with_cache_bust = f"{DTEK_API_URL}?t={int(time.time())}"
