@@ -79,18 +79,33 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
     
     current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
     
+    def filter_unknown(sched):
+        """Замінює 'unknown' на None для коректного порівняння."""
+        return [None if s == "unknown" else s for s in sched]
+
     if mode == "dynamic":
         # Для "Прогнозу" релевантні зміни від зараз до кінця дня сьогодні
         # ТА від початку дня до зараз завтра (це те, що потрапляє в 24-годинне коло).
-        relevant_old = old_for_new_today[current_idx:] + old_for_new_tomorrow[:current_idx]
-        relevant_new = new_for_new_today[current_idx:] + new_for_new_tomorrow[:current_idx]
-        return relevant_old != relevant_new
+        relevant_old = filter_unknown(old_for_new_today[current_idx:] + old_for_new_tomorrow[:current_idx])
+        relevant_new = filter_unknown(new_for_new_today[current_idx:] + new_for_new_tomorrow[:current_idx])
+        
+        # Ми вважаємо зміну релевантною, якщо:
+        # 1. Новий статус відомий (не None)
+        # 2. Він відрізняється від старого статусу (навіть якщо старий був None)
+        for o, n in zip(relevant_old, relevant_new):
+            if n is not None and n != o:
+                return True
+        return False
     else:
         # Для classic та list релевантні зміни від зараз до кінця дня сьогодні
         # ТА весь день завтра (оскільки користувач може перемикати вкладки).
-        relevant_old = old_for_new_today[current_idx:] + old_for_new_tomorrow
-        relevant_new = new_for_new_today[current_idx:] + new_for_new_tomorrow
-        return relevant_old != relevant_new
+        relevant_old = filter_unknown(old_for_new_today[current_idx:] + old_for_new_tomorrow)
+        relevant_new = filter_unknown(new_for_new_today[current_idx:] + new_for_new_tomorrow)
+        
+        for o, n in zip(relevant_old, relevant_new):
+            if n is not None and n != o:
+                return True
+        return False
 
 async def check_updates():
     """

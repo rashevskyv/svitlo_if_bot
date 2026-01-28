@@ -99,8 +99,12 @@ class SvitloApiClient:
         Отримує розклад для вказаної черги. Використовує кеш, якщо він актуальний.
         """
         now = time.time()
-        # Якщо кеш застарів, пробуємо оновити
-        if not self._cached_data or (now - self._last_fetch_time) > self._cache_ttl:
+        # Перевірка зміни дня
+        last_fetch_dt = datetime.fromtimestamp(self._last_fetch_time) if self._last_fetch_time else None
+        day_changed = last_fetch_dt and last_fetch_dt.date() != datetime.now().date()
+        
+        # Якщо кеш застарів АБО змінився день, пробуємо оновити
+        if not self._cached_data or (now - self._last_fetch_time) > self._cache_ttl or day_changed:
             await self._refresh_cache()
             
         if not self._cached_data:
@@ -258,11 +262,16 @@ class SvitloApiClient:
                     raw_response = await resp.json(content_type=None)
                     body_str = raw_response.get("body")
                     if body_str:
-                        self._cached_data = json.loads(body_str)
+                        new_data = json.loads(body_str)
+                        self._merge_with_old_data(new_data)
+                        self._cached_data = new_data
+                        self._sync_cache_dates()
                 elif resp.status == 304:
                     _LOGGER.info("Global API returned 304.")
+                    self._sync_cache_dates()
                 else:
                     _LOGGER.error(f"Global API error {resp.status}")
+                    self._sync_cache_dates()
 
             if not self._cached_data:
                 return []
@@ -346,9 +355,28 @@ class SvitloApiClient:
         
         if new_if_schedules:
             # Оновлюємо розклад у об'єкті регіону
-            # Важливо: ми не просто замінюємо, а оновлюємо, щоб не втратити дані інших черг (хоча тут ми перезаписуємо все)
-            # Але оскільки ми проходимо по ВСІХ чергах, то це ок.
-            region_obj["schedule"] = new_if_schedules
+            # Ми об'єднуємо нові дані з існуючими, щоб не втратити графік за попередній день
+            # відразу після опівночі, якщо він ще потрібен.
+            if "schedule" not in region_obj:
+                region_obj["schedule"] = {}
+            
+            for q_id, q_sched in new_if_schedules.items():
+                if q_id not in region_obj["schedule"]:
+                    region_obj["schedule"][q_id] = {}
+                
+                # Розумне об'єднання для ІФ: не затираємо відоме невідомим
+                old_q_sched = region_obj["schedule"][q_id]
+                for date_str, day_grid in q_sched.items():
+                    if date_str not in old_q_sched:
+                        old_q_sched[date_str] = day_grid
+                    else:
+                        # Порівнюємо по слотах
+                        for slot, status in day_grid.items():
+                            # Якщо новий статус "unknown" (0), а старий був відомий — залишаємо старий
+                            if status == 0 and old_q_sched[date_str].get(slot, 0) != 0:
+                                continue
+                            old_q_sched[date_str][slot] = status
+                
             _LOGGER.info(f"Successfully updated IF schedules from direct source")
 
     def get_changed_regions(self, reset: bool = True) -> list[str]:
@@ -411,3 +439,52 @@ class SvitloApiClient:
         if code == 2: return "off"
         if code == 3: return "possible"
         return "unknown"
+
+    def _sync_cache_dates(self):
+        """Забезпечує відповідність date_today та date_tomorrow системному часу."""
+        if not self._cached_data: return
+        
+        from datetime import timedelta
+        now_date = datetime.now().date()
+        iso_today = now_date.isoformat()
+        iso_tomorrow = (now_date + timedelta(days=1)).isoformat()
+        
+        if self._cached_data.get("date_today") != iso_today:
+            _LOGGER.info(f"Syncing cache dates: {self._cached_data.get('date_today')} -> {iso_today}")
+            self._cached_data["date_today"] = iso_today
+            self._cached_data["date_tomorrow"] = iso_tomorrow
+
+    def _merge_with_old_data(self, new_data: dict):
+        """Об'єднує нові дані з кешу з попередніми, запобігаючи втраті відомих статусів."""
+        if not self._cached_data: return
+        
+        old_regions = {r["cpu"]: r for r in self._cached_data.get("regions", [])}
+        
+        for new_r in new_data.get("regions", []):
+            cpu = new_r.get("cpu")
+            if cpu not in old_regions: continue
+            
+            old_r = old_regions[cpu]
+            if "schedule" not in old_r: continue
+            if "schedule" not in new_r: 
+                new_r["schedule"] = old_r["schedule"]
+                continue
+                
+            # Об'єднуємо черги
+            for q_id, old_q_sched in old_r["schedule"].items():
+                if q_id not in new_r["schedule"]:
+                    new_r["schedule"][q_id] = old_q_sched
+                    continue
+                
+                new_q_sched = new_r["schedule"][q_id]
+                # Об'єднуємо дати
+                for date_str, old_day_grid in old_q_sched.items():
+                    if date_str not in new_q_sched:
+                        new_q_sched[date_str] = old_day_grid
+                    else:
+                        # Розумне об'єднання слотів
+                        for slot, old_status in old_day_grid.items():
+                            new_status = new_q_sched[date_str].get(slot, 0)
+                            # Якщо новий статус "unknown" (0), а старий був відомий — залишаємо старий
+                            if new_status == 0 and old_status != 0:
+                                new_q_sched[date_str][slot] = old_status
