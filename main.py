@@ -50,29 +50,46 @@ session = None
 def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: datetime) -> bool:
     """
     Перевіряє, чи є зміни в розкладі релевантними для користувача залежно від режиму.
+    Використовує абсолютні дати для порівняння, щоб уникнути помилкових спрацювань о 00:00.
     """
     if not old_sched: return True # Перший запуск
     
+    # Перевірка зміни статусу аварії
+    if old_sched.get("is_emergency") != new_sched.get("is_emergency"):
+        return True
+
     from services.image_generator import convert_api_to_half_list
     
-    old_today = convert_api_to_half_list(old_sched["schedule"].get(old_sched["date_today"], {}))
-    new_today = convert_api_to_half_list(new_sched["schedule"].get(new_sched["date_today"], {}))
-    old_tomorrow = convert_api_to_half_list(old_sched["schedule"].get(old_sched["date_tomorrow"], {}))
-    new_tomorrow = convert_api_to_half_list(new_sched["schedule"].get(new_sched["date_tomorrow"], {}))
+    new_date_today = new_sched["date_today"]
+    new_date_tomorrow = new_sched["date_tomorrow"]
+    
+    def get_sched_for_date(sched_obj, date_str):
+        """Допоміжна функція для отримання графіку за конкретну дату."""
+        if sched_obj.get("date_today") == date_str:
+            return convert_api_to_half_list(sched_obj["schedule"].get(date_str, {}))
+        if sched_obj.get("date_tomorrow") == date_str:
+            return convert_api_to_half_list(sched_obj["schedule"].get(date_str, {}))
+        return ["unknown"] * 48
+
+    old_for_new_today = get_sched_for_date(old_sched, new_date_today)
+    new_for_new_today = get_sched_for_date(new_sched, new_date_today)
+    
+    old_for_new_tomorrow = get_sched_for_date(old_sched, new_date_tomorrow)
+    new_for_new_tomorrow = get_sched_for_date(new_sched, new_date_tomorrow)
     
     current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
     
     if mode == "dynamic":
         # Для "Прогнозу" релевантні зміни від зараз до кінця дня сьогодні
-        # ТА від початку дня до зараз завтра.
-        relevant_old = old_today[current_idx:] + old_tomorrow[:current_idx]
-        relevant_new = new_today[current_idx:] + new_tomorrow[:current_idx]
+        # ТА від початку дня до зараз завтра (це те, що потрапляє в 24-годинне коло).
+        relevant_old = old_for_new_today[current_idx:] + old_for_new_tomorrow[:current_idx]
+        relevant_new = new_for_new_today[current_idx:] + new_for_new_tomorrow[:current_idx]
         return relevant_old != relevant_new
     else:
         # Для classic та list релевантні зміни від зараз до кінця дня сьогодні
-        # ТА весь день завтра.
-        relevant_old = old_today[current_idx:] + old_tomorrow
-        relevant_new = new_today[current_idx:] + new_tomorrow
+        # ТА весь день завтра (оскільки користувач може перемикати вкладки).
+        relevant_old = old_for_new_today[current_idx:] + old_for_new_tomorrow
+        relevant_new = new_for_new_today[current_idx:] + new_for_new_tomorrow
         return relevant_old != relevant_new
 
 async def check_updates():
