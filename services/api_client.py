@@ -297,6 +297,24 @@ class SvitloApiClient:
         
         return changed_regions
 
+    async def _fetch_if_queues(self) -> list[str]:
+        """Отримує список доступних черг з сайту ІФ."""
+        if self._session is None:
+            return []
+        try:
+            async with self._session.get(IF_QUEUES_URL, timeout=15) as resp:
+                if resp.status != 200:
+                    _LOGGER.error(f"IF Queues API error {resp.status}")
+                    return []
+                data = await resp.json()
+                # Очікуємо список об'єктів [{"code": "1.1", ...}, ...]
+                if isinstance(data, list):
+                    return [q.get("code") for q in data if isinstance(q, dict) and q.get("code")]
+                return []
+        except Exception as e:
+            _LOGGER.error(f"Failed to fetch IF queues: {e}")
+            return []
+
     async def _update_if_region_data(self):
         """Оновлює дані для регіону ІФ безпосередньо з їхнього сайту."""
         api_region_key = API_REGION_MAP.get(IF_REGION_ID, IF_REGION_ID)
@@ -305,15 +323,19 @@ class SvitloApiClient:
         
         if not region_obj: return
 
-        # Отримуємо список черг, які вже є в кеші (або всі можливі)
-        # Для ІФ черги зазвичай 1.1, 1.2, 2.1...
-        queues = list(region_obj.get("schedule", {}).keys())
+        # 1. Отримуємо список черг з сайту
+        queues = await self._fetch_if_queues()
+        
+        # 2. Якщо не вдалося, використовуємо ті, що є в кеші
         if not queues:
-            # Якщо в глобальному API порожньо, спробуємо дефолтні або отримаємо з сайту
-            # Але поки що візьмемо ті, що є.
-            return
+            queues = list(region_obj.get("schedule", {}).keys())
+            
+        # 3. Якщо і в кеші пусто, використовуємо хардкод (fallback)
+        if not queues:
+            _LOGGER.warning("No queues found for IF, using fallback list")
+            queues = [f"{g}.{s}" for g in range(1, 7) for s in range(1, 3)] # 1.1 ... 6.2
 
-        _LOGGER.info(f"Updating IF schedules for {len(queues)} queues...")
+        _LOGGER.info(f"Updating IF schedules for {len(queues)} queues: {queues}")
         new_if_schedules = {}
         for q in queues:
             raw_if = await self._fetch_if_schedule(q)
@@ -324,6 +346,8 @@ class SvitloApiClient:
         
         if new_if_schedules:
             # Оновлюємо розклад у об'єкті регіону
+            # Важливо: ми не просто замінюємо, а оновлюємо, щоб не втратити дані інших черг (хоча тут ми перезаписуємо все)
+            # Але оскільки ми проходимо по ВСІХ чергах, то це ок.
             region_obj["schedule"] = new_if_schedules
             _LOGGER.info(f"Successfully updated IF schedules from direct source")
 
