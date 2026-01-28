@@ -192,6 +192,15 @@ async def check_updates():
                 for q in queues:
                     old_s = await api_client.get_old_schedule(region_id, q["id"])
                     new_s = await api_client.fetch_schedule(region_id, q["id"])
+                    
+                    # Якщо старий розклад недоступний або ідентичний новому (через перезапис кешу),
+                    # а хеш змінився - значить зміни були, але ми втратили "попередній" стан.
+                    # В такому випадку вважаємо зміни релевантними.
+                    if old_s and new_s and old_s["schedule"] == new_s["schedule"]:
+                        _LOGGER.warning(f"Old schedule lost (cache overwritten) for user {tg_id}, assuming change is relevant.")
+                        is_relevant = True
+                        break
+                        
                     if new_s and is_change_relevant(old_s, new_s, mode, now_dt):
                         is_relevant = True
                         break
