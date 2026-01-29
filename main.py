@@ -230,7 +230,7 @@ async def check_updates():
     
     for user in all_users:
             # user: (tg_id, region_id, queue_id, hash, mode, rem, last_rem, last_upd, notif_en, qh_s, qh_e, last_status_rem, last_ann)
-            tg_id, _, queue_id_json, last_hash, mode, _, _, last_update_str, notif_enabled, qh_start, qh_end, last_status_rem_str, _ = user
+            tg_id, region_id, queue_id_json, last_hash, mode, _, _, last_update_str, notif_enabled, qh_start, qh_end, last_status_rem_str, _ = user
             
             now_dt = datetime.now()
 
