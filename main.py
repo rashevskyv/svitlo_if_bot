@@ -56,7 +56,7 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
     Перевіряє, чи є зміни в розкладі релевантними для користувача залежно від режиму.
     Використовує абсолютні дати для порівняння, щоб уникнути помилкових спрацювань о 00:00.
     """
-    if not old_sched: return True # Перший запуск
+    if not old_sched: return False # Перший запуск після старту бота - не спамимо сповіщеннями
     
     # Перевірка зміни статусу аварії
     if old_sched.get("is_emergency") != new_sched.get("is_emergency"):
@@ -305,9 +305,8 @@ async def check_updates():
                     # а хеш змінився - значить зміни були, але ми втратили "попередній" стан.
                     # В такому випадку вважаємо зміни релевантними.
                     if old_s and new_s and old_s["schedule"] == new_s["schedule"]:
-                        _LOGGER.warning(f"Old schedule lost (cache overwritten) for user {tg_id}, assuming change is relevant.")
-                        is_relevant = True
-                        break
+                        _LOGGER.info(f"Old schedule identical to new for user {tg_id}, skipping.")
+                        continue
                         
                     if new_s and is_change_relevant(old_s, new_s, mode, now_dt, last_update_dt):
                         is_relevant = True
