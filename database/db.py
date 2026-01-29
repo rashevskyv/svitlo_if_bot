@@ -30,7 +30,7 @@ async def init_db():
             pass
 
         try:
-            await db.execute("ALTER TABLE users ADD COLUMN last_reminder_at TEXT")
+            await db.execute("ALTER TABLE users ADD COLUMN last_updated_at TEXT")
         except aiosqlite.OperationalError:
             pass
             
@@ -55,7 +55,7 @@ async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[
 async def get_user(telegram_id: int) -> Optional[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at 
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at 
             FROM users WHERE telegram_id = ?
         """, (telegram_id,)) as cursor:
             row = await cursor.fetchone()
@@ -66,14 +66,16 @@ async def get_user(telegram_id: int) -> Optional[Tuple]:
 async def get_all_users() -> List[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at 
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at 
             FROM users
         """) as cursor:
             return await cursor.fetchall()
 
 async def update_user_hash(telegram_id: int, schedule_hash: str):
+    from datetime import datetime
+    now_str = datetime.now().isoformat()
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("UPDATE users SET last_schedule_hash = ? WHERE telegram_id = ?", (schedule_hash, telegram_id))
+        await db.execute("UPDATE users SET last_schedule_hash = ?, last_updated_at = ? WHERE telegram_id = ?", (schedule_hash, now_str, telegram_id))
         await db.commit()
 
 async def update_user_display_mode(telegram_id: int, display_mode: str):
@@ -141,7 +143,7 @@ async def get_users_by_region(region_id: str) -> List[Tuple]:
     """
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at 
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at 
             FROM users WHERE region_id = ?
         """, (region_id,)) as cursor:
             return await cursor.fetchall()

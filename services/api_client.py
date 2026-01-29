@@ -304,6 +304,15 @@ class SvitloApiClient:
                 await self._session.close()
                 self._session = None
         
+        # Якщо день змінився, ми хочемо перевірити оновлення для ВСІХ регіонів,
+        # навіть якщо їхній вміст не змінився (щоб обробити "сліпі зони" після 00:00)
+        if day_changed:
+            _LOGGER.info("Day changed, marking all regions as pending changes for update check")
+            active_regions = await self.get_active_regions()
+            for reg_id in active_regions:
+                cpu = API_REGION_MAP.get(reg_id, reg_id)
+                self._pending_changes.add(cpu)
+
         return changed_regions
 
     async def _fetch_if_queues(self) -> list[str]:

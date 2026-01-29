@@ -9,6 +9,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
+from typing import Optional
 
 from database.db import init_db, get_all_users, update_user_hash
 from services.api_client import SvitloApiClient
@@ -47,7 +48,7 @@ scheduler = AsyncIOScheduler()
 api_client = None
 session = None
 
-def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: datetime) -> bool:
+def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: datetime, last_update_dt: Optional[datetime] = None) -> bool:
     """
     Перевіряє, чи є зміни в розкладі релевантними для користувача залежно від режиму.
     Використовує абсолютні дати для порівняння, щоб уникнути помилкових спрацювань о 00:00.
@@ -69,6 +70,9 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
             return convert_api_to_half_list(sched_obj["schedule"].get(date_str, {}))
         if sched_obj.get("date_tomorrow") == date_str:
             return convert_api_to_half_list(sched_obj["schedule"].get(date_str, {}))
+        # Якщо дати немає в об'єкті (наприклад, старий графік за вчора), шукаємо прямо в schedule
+        if date_str in sched_obj.get("schedule", {}):
+            return convert_api_to_half_list(sched_obj["schedule"][date_str])
         return ["unknown"] * 48
 
     old_for_new_today = get_sched_for_date(old_sched, new_date_today)
@@ -84,21 +88,40 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
         return [None if s == "unknown" else s for s in sched]
 
     if mode == "dynamic":
-        # Для "Прогнозу" релевантні зміни від зараз до кінця дня сьогодні
-        # ТА від початку дня до зараз завтра (це те, що потрапляє в 24-годинне коло).
+        # ЛОГІКА ПІСЛЯ ОПІВНОЧІ (СЛІПА ЗОНА)
+        if last_update_dt and current_dt.date() > last_update_dt.date():
+            # Ми перейшли через 00:00. Користувач бачить "хвіст" вчорашнього дня
+            # на місці сьогоднішнього вечора.
+            last_hour_idx = last_update_dt.hour * 2 + (1 if last_update_dt.minute >= 30 else 0)
+            
+            # Вчорашній хвіст, який зараз відображається у користувача як майбутнє
+            # (Отримуємо вчорашній графік із "старих" даних)
+            yesterday_iso = last_update_dt.date().isoformat()
+            yesterday_sched = get_sched_for_date(old_sched, yesterday_iso)
+            yesterday_tail = yesterday_sched[last_hour_idx:]
+            
+            # Сьогоднішній графік на той самий період
+            today_tail = new_for_new_today[last_hour_idx:]
+            
+            # Перевіряємо, чи є в сьогоднішньому хвості відключення
+            has_blackouts_today = any(s in ["off", "possible"] for s in today_tail)
+            
+            # Якщо сьогодні там інша ситуація (не така як вчора) ТА є відключення -> оновлюємо
+            if has_blackouts_today and today_tail != yesterday_tail:
+                _LOGGER.info(f"Midnight trigger: today's tail has blackouts and differs from yesterday's tail.")
+                return True
+
+        # СТАНДАРТНА ЛОГІКА (ПОТОЧНЕ ВІКНО 24г)
         relevant_old = filter_unknown(old_for_new_today[current_idx:] + old_for_new_tomorrow[:current_idx])
         relevant_new = filter_unknown(new_for_new_today[current_idx:] + new_for_new_tomorrow[:current_idx])
         
-        # Ми вважаємо зміну релевантною, якщо:
-        # 1. Новий статус відомий (не None)
-        # 2. Він відрізняється від старого статусу (навіть якщо старий був None)
         for o, n in zip(relevant_old, relevant_new):
             if n is not None and n != o:
                 return True
         return False
     else:
         # Для classic та list релевантні зміни від зараз до кінця дня сьогодні
-        # ТА весь день завтра (оскільки користувач може перемикати вкладки).
+        # ТА весь день завтра
         relevant_old = filter_unknown(old_for_new_today[current_idx:] + old_for_new_tomorrow)
         relevant_new = filter_unknown(new_for_new_today[current_idx:] + new_for_new_tomorrow)
         
@@ -179,9 +202,15 @@ async def check_updates():
         # 4. Сповіщаємо користувачів цього регіону
         users = await get_users_by_region(region_id)
         for user in users:
-            # Розпаковуємо перші 5 значень (tg_id, region_id, queue_id, hash, mode)
-            # Решта (нагадування) тут не потрібні
-            tg_id, _, queue_id_json, last_hash, mode = user[:5]
+            # Розпаковуємо значення (tg_id, region_id, queue_id, hash, mode, reminder, last_reminder, last_update)
+            tg_id, _, queue_id_json, last_hash, mode, _, _, last_update_str = user
+            
+            last_update_dt = None
+            if last_update_str:
+                try:
+                    last_update_dt = datetime.fromisoformat(last_update_str)
+                except:
+                    pass
             
             # Отримуємо актуальні розклади для всіх черг користувача
             try:
@@ -216,7 +245,7 @@ async def check_updates():
                         is_relevant = True
                         break
                         
-                    if new_s and is_change_relevant(old_s, new_s, mode, now_dt):
+                    if new_s and is_change_relevant(old_s, new_s, mode, now_dt, last_update_dt):
                         is_relevant = True
                         break
                 
