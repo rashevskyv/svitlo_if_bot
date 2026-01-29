@@ -245,6 +245,14 @@ class SvitloApiClient:
         changed_regions = []
         _LOGGER.info("Refreshing global API cache...")
         
+        # Визначаємо, чи змінився день з моменту останнього оновлення
+        day_changed = False
+        today_iso = datetime.now().date().isoformat()
+        if self._last_fetch_time:
+            last_dt = datetime.fromtimestamp(self._last_fetch_time)
+            if last_dt.date().isoformat() != today_iso:
+                day_changed = True
+
         # Зберігаємо попередній стан перед оновленням
         if self._cached_data:
             import copy
