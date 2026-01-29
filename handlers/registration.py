@@ -263,6 +263,13 @@ async def process_queue(message: Message, state: FSMContext):
     
     # Зберігаємо користувача (за замовчуванням classic)
     await add_or_update_user(message.from_user.id, region_id, valid_queues)
+    
+    # Позначаємо, що користувач вже бачив поточне оголошення (адже він тільки зареєструвався)
+    try:
+        from database.db import update_user_last_announcement
+        await update_user_last_announcement(message.from_user.id, "quiet_hours_2026_01")
+    except: pass
+    
     _LOGGER.info(f"User {message.from_user.id} registered with queues {valid_queues} in region {region_id}")
     
     queues_str = ", ".join([f"{q['id']} ({q['alias']})" if q['id'] != q['alias'] else q['id'] for q in valid_queues])

@@ -58,6 +58,11 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
 
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN last_announcement_id TEXT")
+        except aiosqlite.OperationalError:
+            pass
+
         await db.commit()
 
 async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[Dict[str, str]]):

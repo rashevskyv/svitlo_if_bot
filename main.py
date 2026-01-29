@@ -35,6 +35,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHECK_INTERVAL_STR = os.getenv("CHECK_INTERVAL", "10")
 CHECK_INTERVAL = int(CHECK_INTERVAL_STR)
 
+CURRENT_ANNOUNCEMENT_ID = "quiet_hours_2026_01"
+
 if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
     _LOGGER.error(f"BOT_TOKEN is invalid or missing! Value: {repr(BOT_TOKEN)}")
     exit(1)
@@ -384,6 +386,9 @@ async def main():
     from services.reminder_service import check_reminders
     scheduler.add_job(check_reminders, "interval", minutes=1, args=[bot, api_client])
     
+    # Feature Announcements at 12:00
+    scheduler.add_job(broadcast_announcements, "cron", hour=12, minute=0)
+    
     scheduler.start()
     
     # Негайна перевірка при старті
@@ -395,6 +400,37 @@ async def main():
         await dp.start_polling(bot)
     finally:
         await session.close()
+
+async def broadcast_announcements():
+    from database.db import get_all_users, update_user_last_announcement
+    users = await get_all_users()
+    _LOGGER.info(f"Checking for feature announcements (ID: {CURRENT_ANNOUNCEMENT_ID})...")
+    
+    count = 0
+    for user in users:
+        # tg_id is index 0
+        # last_announcement_id is index 12 in get_all_users result
+        tg_id = user[0]
+        last_ann_id = user[12] if len(user) > 12 else None
+        
+        if last_ann_id != CURRENT_ANNOUNCEMENT_ID:
+            text = (
+                "🆕 **Нова функція: Тихі години та керування сповіщеннями!**\n\n"
+                "Ми додали можливість налаштовувати, коли бот надсилає вам оновлення:\n"
+                "• **🌙 Тихі години** — виберіть час (наприклад, 23:00 - 08:00), коли бот не буде надсилати автоматичні повідомлення.\n"
+                "• **🔕 Вимкнення сповіщень** — можна повністю вимкнути автоматичні оновлення графіка.\n\n"
+                "⚙️ Налаштувати можна тут: `⚙️ Змінити налаштування` -> `🌙 Сповіщення та тихі години`."
+            )
+            try:
+                await bot.send_message(tg_id, text, parse_mode="Markdown")
+                await update_user_last_announcement(tg_id, CURRENT_ANNOUNCEMENT_ID)
+                count += 1
+                await asyncio.sleep(0.05) # Rate limiting
+            except Exception as e:
+                _LOGGER.warning(f"Failed to send announcement to user {tg_id}: {e}")
+    
+    if count > 0:
+        _LOGGER.info(f"Sent {count} announcements.")
 
 @dp.callback_query(F.data == "enable_notifs")
 async def process_enable_notifs(callback: CallbackQuery):
