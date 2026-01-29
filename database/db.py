@@ -12,8 +12,12 @@ async def init_db():
                 telegram_id INTEGER PRIMARY KEY,
                 region_id TEXT NOT NULL,
                 queue_id TEXT NOT NULL,
-                last_schedule_hash TEXT,
-                display_mode TEXT DEFAULT 'classic'
+                last_updated_at TEXT,
+                notifications_enabled INTEGER DEFAULT 1,
+                quiet_hours_start TEXT,
+                quiet_hours_end TEXT,
+                last_status_reminder_at TEXT,
+                last_announcement_id TEXT
             )
         """)
         await db.commit()
@@ -34,6 +38,26 @@ async def init_db():
         except aiosqlite.OperationalError:
             pass
             
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN notifications_enabled INTEGER DEFAULT 1")
+        except aiosqlite.OperationalError:
+            pass
+
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN quiet_hours_start TEXT")
+        except aiosqlite.OperationalError:
+            pass
+
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN quiet_hours_end TEXT")
+        except aiosqlite.OperationalError:
+            pass
+
+        try:
+            await db.execute("ALTER TABLE users ADD COLUMN last_status_reminder_at TEXT")
+        except aiosqlite.OperationalError:
+            pass
+
         await db.commit()
 
 async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[Dict[str, str]]):
@@ -55,7 +79,8 @@ async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[
 async def get_user(telegram_id: int) -> Optional[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at 
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at,
+                   notifications_enabled, quiet_hours_start, quiet_hours_end, last_status_reminder_at, last_announcement_id
             FROM users WHERE telegram_id = ?
         """, (telegram_id,)) as cursor:
             row = await cursor.fetchone()
@@ -66,7 +91,8 @@ async def get_user(telegram_id: int) -> Optional[Tuple]:
 async def get_all_users() -> List[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at 
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at,
+                   notifications_enabled, quiet_hours_start, quiet_hours_end, last_status_reminder_at, last_announcement_id
             FROM users
         """) as cursor:
             return await cursor.fetchall()
@@ -143,7 +169,28 @@ async def get_users_by_region(region_id: str) -> List[Tuple]:
     """
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
-            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at 
+            SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at,
+                   notifications_enabled, quiet_hours_start, quiet_hours_end, last_status_reminder_at, last_announcement_id
             FROM users WHERE region_id = ?
         """, (region_id,)) as cursor:
             return await cursor.fetchall()
+
+async def update_user_notifications(telegram_id: int, enabled: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET notifications_enabled = ? WHERE telegram_id = ?", (enabled, telegram_id))
+        await db.commit()
+
+async def update_user_quiet_hours(telegram_id: int, start_time: Optional[str], end_time: Optional[str]):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET quiet_hours_start = ?, quiet_hours_end = ? WHERE telegram_id = ?", (start_time, end_time, telegram_id))
+        await db.commit()
+
+async def update_user_status_reminder(telegram_id: int, timestamp: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET last_status_reminder_at = ? WHERE telegram_id = ?", (timestamp, telegram_id))
+        await db.commit()
+
+async def update_user_last_announcement(telegram_id: int, announcement_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET last_announcement_id = ? WHERE telegram_id = ?", (announcement_id, telegram_id))
+        await db.commit()

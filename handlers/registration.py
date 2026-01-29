@@ -30,6 +30,9 @@ class Registration(StatesGroup):
     waiting_for_settings_choice = State()
     waiting_for_display_mode = State()
     waiting_for_reminder_time = State()
+    waiting_for_quiet_hours_settings = State()
+    waiting_for_quiet_hours_time = State()
+    waiting_for_quiet_hours_confirm = State()
 
 # Ключові слова для групування областей (динамічно)
 MACRO_GROUPS_KEYWORDS = {
@@ -304,6 +307,7 @@ async def cmd_settings(message: Message, state: FSMContext):
         [KeyboardButton(text="🌍 Змінити регіон/чергу")],
         [KeyboardButton(text="🎨 Змінити вигляд графіку")],
         [KeyboardButton(text="🔔 Налаштувати нагадування")],
+        [KeyboardButton(text="🌙 Сповіщення та тихі години")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -365,6 +369,8 @@ async def process_settings_choice(message: Message, state: FSMContext):
             parse_mode="Markdown"
         )
         await state.set_state(Registration.waiting_for_reminder_time)
+    elif choice == "🌙 Сповіщення та тихі години":
+        await show_quiet_hours_menu(message, state)
     elif choice == "⬅️ Назад":
         await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
         await state.clear()
@@ -455,6 +461,129 @@ async def process_reminder_time(message: Message, state: FSMContext):
     
     await state.clear()
 
+async def show_quiet_hours_menu(message: Message, state: FSMContext):
+    user = await get_user(message.from_user.id)
+    notif_enabled = user[8] if user and len(user) > 8 else 1
+    q_start = user[9] if user and len(user) > 9 else None
+    q_end = user[10] if user and len(user) > 10 else None
+
+    status = "✅ Увімкнені" if notif_enabled else "❌ Вимкнені"
+    qh_status = f"🌙 Тихі години: **{q_start} - {q_end}**" if q_start and q_end else "🌙 Тихі години: **не встановлено**"
+
+    text = (
+        f"🔔 **Налаштування сповіщень**\n\n"
+        f"Статус сповіщень: {status}\n"
+        f"{qh_status}\n\n"
+        f"Тихі години — це час, коли бот не буде надсилати вам автоматичні оновлення (наприклад, вночі)."
+    )
+
+    buttons = [
+        [KeyboardButton(text="🔔 Увімкнути сповіщення" if not notif_enabled else "🔕 Вимкнути сповіщення")],
+        [KeyboardButton(text="⏰ Встановити тихі години")],
+        [KeyboardButton(text="🗑 Скинути тихі години")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+    await state.set_state(Registration.waiting_for_quiet_hours_settings)
+
+@router.message(Registration.waiting_for_quiet_hours_settings)
+async def handle_quiet_hours_settings(message: Message, state: FSMContext):
+    choice = message.text
+    if choice == "⬅️ Назад":
+        await cmd_settings(message, state)
+        return
+
+    from database.db import update_user_notifications, update_user_quiet_hours
+    if choice in ["🔔 Увімкнути сповіщення", "🔕 Вимкнути сповіщення"]:
+        enabled = 1 if "Увімкнути" in choice else 0
+        await update_user_notifications(message.from_user.id, enabled)
+        await show_quiet_hours_menu(message, state)
+    elif choice == "⏰ Встановити тихі години":
+        instructions = (
+            "🕒 **Встановлення тихих годин**\n\n"
+            "Будь ласка, введіть час початку та закінчення в одному повідомленні.\n"
+            "Формат: `ПОЧАТОК ЗАКІНЧЕННЯ`\n\n"
+            "Можна використовувати різні формати:\n"
+            "• `23:00 07:30` (через двокрапку)\n"
+            "• `23 7` (тільки години)\n"
+            "• `23-08` (через дефіс)\n"
+            "• `22 30 08 00` (через пробіли)\n\n"
+            "Бот розпізнає більшість зручних форматів."
+        )
+        await message.answer(instructions, parse_mode="Markdown")
+        await state.set_state(Registration.waiting_for_quiet_hours_time)
+    elif choice == "🗑 Скинути тихі години":
+        await update_user_quiet_hours(message.from_user.id, None, None)
+        await message.answer("Тихі години скинуті.")
+        await show_quiet_hours_menu(message, state)
+
+def parse_time_interval(text: str):
+    """Парсить текст у два часових значення HH:MM."""
+    # Знаходимо всі цифри в рядку
+    nums = re.findall(r"(\d+)", text)
+    if not nums: return None
+    
+    if len(nums) == 2:
+        # Може бути 23 08 або 23-08
+        h1, h2 = int(nums[0]), int(nums[1])
+        if 0 <= h1 <= 23 and 0 <= h2 <= 23:
+            return f"{h1:02d}:00", f"{h2:02d}:00"
+    elif len(nums) == 4:
+        # Може бути 23 00 08 30
+        h1, m1, h2, m2 = map(int, nums)
+        if 0 <= h1 <= 23 and 0 <= m1 <= 59 and 0 <= h2 <= 23 and 0 <= m2 <= 59:
+            return f"{h1:02d}:{m1:02d}", f"{h2:02d}:{m2:02d}"
+    
+    # Спроба регуляркою для HH:MM HH:MM
+    matches = re.findall(r"(\d{1,2})[:\s-](\d{2})", text)
+    if len(matches) == 2:
+        try:
+            h1, m1 = map(int, matches[0])
+            h2, m2 = map(int, matches[1])
+            if 0 <= h1 <= 23 and 0 <= m1 <= 59 and 0 <= h2 <= 23 and 0 <= m2 <= 59:
+                return f"{h1:02d}:{m1:02d}", f"{h2:02d}:{m2:02d}"
+        except: pass
+            
+    return None
+
+@router.message(Registration.waiting_for_quiet_hours_time)
+async def handle_quiet_hours_time(message: Message, state: FSMContext):
+    if message.text == "⬅️ Назад":
+        await show_quiet_hours_menu(message, state)
+        return
+
+    parsed = parse_time_interval(message.text)
+    if not parsed:
+        await message.answer("Не вдалося розпізнати час. Спробуйте ще раз, наприклад: `23:00 07:00` або `22 08`.")
+        return
+
+    start, end = parsed
+    await state.update_data(qh_start=start, qh_end=end)
+    
+    buttons = [
+        [KeyboardButton(text="✅ Все правильно")],
+        [KeyboardButton(text="🔄 Спробувати інший час")],
+        [KeyboardButton(text="⬅️ Назад")]
+    ]
+    keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
+    await message.answer(f"Ви вказали тихі години: **{start} — {end}**\nВсе вірно?", reply_markup=keyboard, parse_mode="Markdown")
+    await state.set_state(Registration.waiting_for_quiet_hours_confirm)
+
+@router.message(Registration.waiting_for_quiet_hours_confirm)
+async def handle_quiet_hours_confirm(message: Message, state: FSMContext):
+    if message.text == "⬅️ Назад" or message.text == "🔄 Спробувати інший час":
+        await message.answer("Введіть час початку та закінчення:")
+        await state.set_state(Registration.waiting_for_quiet_hours_time)
+        return
+
+    if message.text == "✅ Все правильно":
+        data = await state.get_data()
+        from database.db import update_user_quiet_hours
+        await update_user_quiet_hours(message.from_user.id, data['qh_start'], data['qh_end'])
+        await message.answer("Налаштування збережено!")
+        await show_quiet_hours_menu(message, state)
+
 async def send_schedule(target: Any, tg_id: int):
     """
     Універсальна функція для відправки графіку.
@@ -476,8 +605,8 @@ async def send_schedule(target: Any, tg_id: int):
             await target.answer("Ви ще не зареєстровані. Будь ласка, скористайтеся командою /start")
         return
     
-    # user: (tg_id, region_id, queue_id_json, hash, mode, reminder_min, last_rem)
-    _, region_id, queue_id_json, _, mode = user[:5]
+    # user: (tg_id, region_id, queue_id_json, hash, mode, rem_min, last_rem, last_upd, notif_en, qh_s, qh_e, last_status_rem)
+    _, region_id, queue_id_json, _, mode, _, _, _, notif_enabled, qh_start, qh_end, _ = user
     if not mode: mode = "classic"
     
     try:
@@ -562,14 +691,20 @@ async def send_schedule(target: Any, tg_id: int):
         if is_schedule_empty(tomorrow_half):
             forecast_text += "\n\n⚠️ **Графіку на завтра ще немає.**"
         
-        # Додаємо час запиту в підпис
+        # Додаємо час запиту та статус сповіщень в підпис
         timestamp_str = now_dt.strftime("%H:%M")
         
+        notif_status_str = ""
+        if not notif_enabled:
+            notif_status_str = "\n⚠️ **Сповіщення вимкнені**"
+        elif qh_start and qh_end:
+            notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end}**"
+
         queue_media = []
         for i, img_buf in enumerate(images_to_send):
             photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{q['id']}_{i}.png")
             # Додаємо підпис тільки до першого фото кожної черги
-            caption = f"📍 **{q['alias']}**\n{forecast_text}\n\n🕒 _Запитано о {timestamp_str}_" if i == 0 else None
+            caption = f"📍 **{q['alias']}**\n{forecast_text}{notif_status_str}\n\n🕒 _Запитано о {timestamp_str}_" if i == 0 else None
             queue_media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
         
         if not queue_media:

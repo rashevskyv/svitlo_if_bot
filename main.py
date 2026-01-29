@@ -5,7 +5,8 @@ import json
 import os
 import aiohttp
 from dotenv import load_dotenv
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.storage.memory import MemoryStorage
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from datetime import datetime
@@ -130,6 +131,28 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
                 return True
         return False
 
+def is_now_quiet_hours(start_str: Optional[str], end_str: Optional[str], current_dt: datetime) -> bool:
+    if not start_str or not end_str:
+        return False
+    
+    try:
+        h_s, m_s = map(int, start_str.split(':'))
+        h_e, m_e = map(int, end_str.split(':'))
+        
+        now_time = current_dt.time()
+        start_time = now_time.replace(hour=h_s, minute=m_s, second=0, microsecond=0)
+        end_time = now_time.replace(hour=h_e, minute=m_e, second=0, microsecond=0)
+        
+        if start_time < end_time:
+            # Денний інтервал, наприклад 08:00 - 22:00
+            return start_time <= now_time <= end_time
+        else:
+            # Нічний інтервал, наприклад 22:00 - 08:00
+            return now_time >= start_time or now_time <= end_time
+    except Exception as e:
+        _LOGGER.error(f"Error parsing quiet hours: {e}")
+        return False
+
 async def check_updates():
     """
     Періодична перевірка оновлень розкладу.
@@ -145,8 +168,7 @@ async def check_updates():
     changed_region_cpus = api_client.get_changed_regions(reset=True)
     
     if not changed_region_cpus:
-        _LOGGER.info("No regions changed.")
-        return
+        _LOGGER.info("No regions changed, checking for catch-up updates.")
 
     bot_info = await bot.get_me()
     bot_username = bot_info.username
@@ -199,12 +221,52 @@ async def check_updates():
                 )
                 img_cache.set(region_id, q_id, mode, sched_hash, images)
 
-        # 4. Сповіщаємо користувачів цього регіону
-        users = await get_users_by_region(region_id)
-        for user in users:
-            # Розпаковуємо значення (tg_id, region_id, queue_id, hash, mode, reminder, last_reminder, last_update)
-            tg_id, _, queue_id_json, last_hash, mode, _, _, last_update_str = user
+    # 2. Перевіряємо ВСІХ користувачів на необхідність оновлення (catch-up)
+    from database.db import get_all_users
+    all_users = await get_all_users()
+    _LOGGER.info(f"Checking updates for {len(all_users)} users...")
+    
+    for user in all_users:
+            # user: (tg_id, region_id, queue_id, hash, mode, rem, last_rem, last_upd, notif_en, qh_s, qh_e, last_status_rem)
+            tg_id, _, queue_id_json, last_hash, mode, _, _, last_update_str, notif_enabled, qh_start, qh_end, last_status_rem_str = user
             
+            now_dt = datetime.now()
+
+            # --- ПЕРЕВІРКА НАГАДУВАННЯ ПРО ВИМКНЕНІ СПОВІЩЕННЯ (РАЗ НА 2 ДОБИ) ---
+            if not notif_enabled:
+                should_remind = False
+                if not last_status_rem_str:
+                    should_remind = True
+                else:
+                    try:
+                        last_rem_dt = datetime.fromisoformat(last_status_rem_str)
+                        if (now_dt - last_rem_dt).total_seconds() > 2 * 24 * 3600:
+                            should_remind = True
+                    except: should_remind = True
+                
+                if should_remind:
+                    from database.db import update_user_status_reminder
+                    await update_user_status_reminder(tg_id, now_dt.isoformat())
+                    buttons = [
+                        [InlineKeyboardButton(text="🔔 Увімкнути сповіщення", callback_data="enable_notifs")],
+                        [InlineKeyboardButton(text="🔕 Лишити вимкненими", callback_data="keep_notifs_off")]
+                    ]
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+                    try:
+                        await bot.send_message(
+                            tg_id, 
+                            "👋 Привіт! Ваші сповіщення про оновлення графіка **вимкнені** вже понад 2 доби.\nБажаєте увімкнути їх знову?",
+                            reply_markup=keyboard,
+                            parse_mode="Markdown"
+                        )
+                    except: pass
+                continue # Якщо сповіщення вимкнені, оновлення не слати далі
+
+            # --- ПЕРЕВІРКА ТИХИХ ГОДИН ---
+            if is_now_quiet_hours(qh_start, qh_end, now_dt):
+                _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}). Postponing notification.")
+                continue
+
             last_update_dt = None
             if last_update_str:
                 try:
@@ -333,6 +395,18 @@ async def main():
         await dp.start_polling(bot)
     finally:
         await session.close()
+
+@dp.callback_query(F.data == "enable_notifs")
+async def process_enable_notifs(callback: CallbackQuery):
+    from database.db import update_user_notifications
+    await update_user_notifications(callback.from_user.id, 1)
+    await callback.message.edit_text("✅ Сповіщення увімкнено! Тепер ви отримуватимете оновлення графіка.")
+    await callback.answer()
+
+@dp.callback_query(F.data == "keep_notifs_off")
+async def process_keep_notifs_off(callback: CallbackQuery):
+    await callback.message.edit_text("👌 Зрозумів. Сповіщення залишаються вимкненими. Я запитаю вас знову через 2 дні.")
+    await callback.answer()
 
 if __name__ == "__main__":
     try:
