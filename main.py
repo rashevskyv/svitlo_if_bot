@@ -183,7 +183,7 @@ async def check_updates():
     for cpu in changed_region_cpus:
         region_id = cpu_to_region_id.get(cpu)
         if not region_id:
-            _LOGGER.warning(f"Changed region CPU '{cpu}' not found in REGIONS map")
+            _LOGGER.debug(f"Changed region CPU '{cpu}' not found in REGIONS map, ignoring.")
             continue
             
         _LOGGER.info(f"Region '{region_id}' changed. Processing updates...")
