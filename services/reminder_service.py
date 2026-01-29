@@ -19,7 +19,7 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
     now = datetime.now()
     
     for user in users:
-        tg_id, region_id, queue_id_json, _, _, reminder_min, last_rem = user
+        tg_id, region_id, queue_id_json, _, _, reminder_min, last_rem, _, _, _, _, _, _ = user
         
         if not reminder_min or reminder_min <= 0:
             continue
