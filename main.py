@@ -53,85 +53,69 @@ session = None
 
 def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: datetime, last_update_dt: Optional[datetime] = None) -> bool:
     """
-    Перевіряє, чи є зміни в розкладі релевантними для користувача залежно від режиму.
-    Використовує абсолютні дати для порівняння, щоб уникнути помилкових спрацювань о 00:00.
+    Improved version of is_change_relevant that checks all available dates.
     """
-    if not old_sched: return False # Перший запуск після старту бота - не спамимо сповіщеннями
+    if not old_sched:
+        _LOGGER.debug(f"is_change_relevant: old_sched is None, returning False (silent fill)")
+        return False
     
     # Перевірка зміни статусу аварії
     if old_sched.get("is_emergency") != new_sched.get("is_emergency"):
+        _LOGGER.info(f"is_change_relevant: Emergency status changed: {old_sched.get('is_emergency')} -> {new_sched.get('is_emergency')}")
         return True
 
     from services.image_generator import convert_api_to_half_list
     
-    new_date_today = new_sched["date_today"]
-    new_date_tomorrow = new_sched["date_tomorrow"]
-    
     def get_sched_for_date(sched_obj, date_str):
-        """Допоміжна функція для отримання графіку за конкретну дату."""
         if sched_obj.get("date_today") == date_str:
             return convert_api_to_half_list(sched_obj["schedule"].get(date_str, {}))
         if sched_obj.get("date_tomorrow") == date_str:
             return convert_api_to_half_list(sched_obj["schedule"].get(date_str, {}))
-        # Якщо дати немає в об'єкті (наприклад, старий графік за вчора), шукаємо прямо в schedule
         if date_str in sched_obj.get("schedule", {}):
             return convert_api_to_half_list(sched_obj["schedule"][date_str])
         return ["unknown"] * 48
 
-    old_for_new_today = get_sched_for_date(old_sched, new_date_today)
-    new_for_new_today = get_sched_for_date(new_sched, new_date_today)
-    
-    old_for_new_tomorrow = get_sched_for_date(old_sched, new_date_tomorrow)
-    new_for_new_tomorrow = get_sched_for_date(new_sched, new_date_tomorrow)
-    
-    current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
-    
     def filter_unknown(sched):
-        """Замінює 'unknown' на None для коректного порівняння."""
         return [None if s == "unknown" else s for s in sched]
 
-    if mode == "dynamic":
-        # ЛОГІКА ПІСЛЯ ОПІВНОЧІ (СЛІПА ЗОНА)
-        if last_update_dt and current_dt.date() > last_update_dt.date():
-            # Ми перейшли через 00:00. Користувач бачить "хвіст" вчорашнього дня
-            # на місці сьогоднішнього вечора.
-            last_hour_idx = last_update_dt.hour * 2 + (1 if last_update_dt.minute >= 30 else 0)
+    current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
+    today_iso = current_dt.date().isoformat()
+    
+    # ЛОГІКА ПЕРЕВІРКИ ВСІХ ДОСТУПНИХ ДАТ
+    new_dates = sorted(new_sched["schedule"].keys())
+    for date_str in new_dates:
+        # Для сьогоднішнього дня перевіряємо тільки майбутнє
+        if date_str == today_iso:
+            start_idx = current_idx
+        elif date_str < today_iso:
+            continue # Минуле не цікавить
+        else:
+            start_idx = 0 # Майбутні дні перевіряємо повністю
             
-            # Вчорашній хвіст, який зараз відображається у користувача як майбутнє
-            # (Отримуємо вчорашній графік із "старих" даних)
-            yesterday_iso = last_update_dt.date().isoformat()
-            yesterday_sched = get_sched_for_date(old_sched, yesterday_iso)
-            yesterday_tail = yesterday_sched[last_hour_idx:]
-            
-            # Сьогоднішній графік на той самий період
-            today_tail = new_for_new_today[last_hour_idx:]
-            
-            # Перевіряємо, чи є в сьогоднішньому хвості відключення
-            has_blackouts_today = any(s in ["off", "possible"] for s in today_tail)
-            
-            # Якщо сьогодні там інша ситуація (не така як вчора) ТА є відключення -> оновлюємо
-            if has_blackouts_today and today_tail != yesterday_tail:
-                _LOGGER.info(f"Midnight trigger: today's tail has blackouts and differs from yesterday's tail.")
+        old_day = filter_unknown(get_sched_for_date(old_sched, date_str))[start_idx:]
+        new_day = filter_unknown(get_sched_for_date(new_sched, date_str))[start_idx:]
+        
+        for i, (o, n) in enumerate(zip(old_day, new_day)):
+            if n is not None and n != o:
+                _LOGGER.info(f"is_change_relevant: Found change on {date_str} at idx {start_idx + i}: {o} -> {n}")
                 return True
 
-        # СТАНДАРТНА ЛОГІКА (ПОТОЧНЕ ВІКНО 24г)
-        relevant_old = filter_unknown(old_for_new_today[current_idx:] + old_for_new_tomorrow[:current_idx])
-        relevant_new = filter_unknown(new_for_new_today[current_idx:] + new_for_new_tomorrow[:current_idx])
+    # Окрема логіка для динамічного режиму (сліпа зона опівночі)
+    if mode == "dynamic" and last_update_dt and current_dt.date() > last_update_dt.date():
+        yesterday_iso = last_update_dt.date().isoformat()
+        yesterday_sched = get_sched_for_date(old_sched, yesterday_iso)
+        last_hour_idx = last_update_dt.hour * 2 + (1 if last_update_dt.minute >= 30 else 0)
+        yesterday_tail = yesterday_sched[last_hour_idx:]
         
-        for o, n in zip(relevant_old, relevant_new):
-            if n is not None and n != o:
-                return True
-        return False
-    else:
-        # Для classic та list релевантні зміни від зараз до кінця дня сьогодні
-        # ТА весь день завтра
-        relevant_old = filter_unknown(old_for_new_today[current_idx:] + old_for_new_tomorrow)
-        relevant_new = filter_unknown(new_for_new_today[current_idx:] + new_for_new_tomorrow)
+        new_today_sched = get_sched_for_date(new_sched, today_iso)
+        today_tail = new_today_sched[last_hour_idx:]
         
-        for o, n in zip(relevant_old, relevant_new):
-            if n is not None and n != o:
-                return True
-        return False
+        if any(s in ["off", "possible"] for s in today_tail) and today_tail != yesterday_tail:
+            _LOGGER.info(f"is_change_relevant: Midnight trigger (dynamic).")
+            return True
+            
+    _LOGGER.debug(f"is_change_relevant: No relevant changes found for mode {mode}")
+    return False
 
 def is_now_quiet_hours(start_str: Optional[str], end_str: Optional[str], current_dt: datetime) -> bool:
     if not start_str or not end_str:
@@ -305,12 +289,14 @@ async def check_updates():
                     # а хеш змінився - значить зміни були, але ми втратили "попередній" стан.
                     # В такому випадку вважаємо зміни релевантними.
                     if old_s and new_s and old_s["schedule"] == new_s["schedule"]:
-                        _LOGGER.info(f"Old schedule identical to new for user {tg_id}, skipping.")
+                        _LOGGER.info(f"Old schedule identical to new for user {tg_id}, skipping relevance check.")
                         continue
                         
                     if new_s and is_change_relevant(old_s, new_s, mode, now_dt, last_update_dt):
                         is_relevant = True
                         break
+                    else:
+                        _LOGGER.debug(f"Change for queue {q['id']} deemed irrelevant for user {tg_id}")
                 
                 if not is_relevant and last_hash is not None:
                     _LOGGER.info(f"Skipping notification for user {tg_id} (irrelevant changes for mode {mode})")
@@ -318,7 +304,7 @@ async def check_updates():
                     continue
 
                 if last_hash is not None:
-                    _LOGGER.info(f"Notifying user {tg_id} about schedule change")
+                    _LOGGER.info(f"Notifying user {tg_id} about schedule change (is_relevant={is_relevant}, mode={mode})")
                     try:
                         await bot.send_message(tg_id, "🔔 Розклад оновився!")
                         await send_schedule(bot, tg_id)
