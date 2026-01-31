@@ -56,8 +56,8 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
     Improved version of is_change_relevant that checks all available dates.
     """
     if not old_sched:
-        _LOGGER.debug(f"is_change_relevant: old_sched is None, returning False (silent fill)")
-        return False
+        _LOGGER.debug(f"is_change_relevant: old_sched is None, returning True (notifying on hash change after restart/history loss)")
+        return True
     
     # Перевірка зміни статусу аварії
     if old_sched.get("is_emergency") != new_sched.get("is_emergency"):
@@ -282,15 +282,17 @@ async def check_updates():
                 is_relevant = False
                 now_dt = datetime.now()
                 for q in queues:
+                    # Отримуємо старий та новий розклади синхронно з одного стану клієнта
                     old_s = await api_client.get_old_schedule(region_id, q["id"])
                     new_s = await api_client.fetch_schedule(region_id, q["id"])
                     
                     # Якщо старий розклад недоступний або ідентичний новому (через перезапис кешу),
                     # а хеш змінився - значить зміни були, але ми втратили "попередній" стан.
-                    # В такому випадку вважаємо зміни релевантними.
-                    if old_s and new_s and old_s["schedule"] == new_s["schedule"]:
-                        _LOGGER.info(f"Old schedule identical to new for user {tg_id}, skipping relevance check.")
-                        continue
+                    # В такому випадку обов'язково вважаємо зміни релевантними, щоб не пропустити оновлення.
+                    if not old_s or (old_s and new_s and old_s["schedule"] == new_s["schedule"]):
+                        _LOGGER.info(f"History lost or unavailable for user {tg_id} (queue {q['id']}), forcing relevance.")
+                        is_relevant = True
+                        break
                         
                     if new_s and is_change_relevant(old_s, new_s, mode, now_dt, last_update_dt):
                         is_relevant = True
