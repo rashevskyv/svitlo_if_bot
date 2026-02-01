@@ -60,40 +60,77 @@ def _generate_circle_view(
     """
     Генерує одну кругову діаграму.
     """
-    if dynamic:
-        current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
-        # Сектори від зараз до кінця дня (сьогодні)
-        today_part = day_data[current_idx:]
-        # Сектори від 00:00 до зараз (завтра)
-        if tomorrow_data and len(tomorrow_data) == 48:
-            tomorrow_part = tomorrow_data[:current_idx]
-            waiting_tomorrow = False
-        else:
-            tomorrow_part = ["unknown"] * current_idx
-            waiting_tomorrow = True
-            
-        display_data = (tomorrow_part + today_part + ["unknown"] * 48)[:48]
-        title = "Прогноз (24 год)"
-    else:
-        display_data = (day_data + ["unknown"] * 48)[:48]
-        waiting_tomorrow = False
-
     color_map = {
         "on": COLOR_ON, 
         "off": COLOR_OFF, 
         "possible": COLOR_POSSIBLE,
         "unknown": COLOR_UNKNOWN
     }
-    colors = [color_map.get(s, COLOR_UNKNOWN) for s in display_data]
-    sizes = [1] * 48
 
     fig = plt.figure(figsize=(8, 8))
     # Максимально збільшуємо графік, щоб він займав майже весь простір
     ax = fig.add_axes([0.01, 0.01, 0.98, 0.98], projection=None, aspect='equal')
     
-    # Малюємо кільце з 48 сегментів
-    ax.pie(sizes, colors=colors, startangle=90, counterclock=False, 
-           wedgeprops=dict(width=0.4, edgecolor='none', linewidth=0))
+    if dynamic:
+        title = "Прогноз (24 год)"
+        # Похвилинна роздільна здатність (1440 хвилин)
+        current_minute = current_dt.hour * 60 + current_dt.minute
+        
+        # Функція для отримання статусу на конкретну хвилину
+        def get_status_at_min(data, minute):
+            if not data or len(data) != 48:
+                return "unknown"
+            return data[minute // 30]
+
+        # Головне кільце:
+        # Від 00:00 до зараз -> ЗАВТРА
+        # Від зараз до 00:00 -> СЬОГОДНІ
+        display_colors = []
+        for m in range(1440):
+            if m < current_minute:
+                # Минуле відносно стрілки на колі — це завтрашній ранок
+                status = get_status_at_min(tomorrow_data, m)
+            else:
+                # Майбутнє відносно стрілки — це залишок сьогоднішнього дня
+                status = get_status_at_min(day_data, m)
+            display_colors.append(color_map.get(status, COLOR_UNKNOWN))
+
+        # Малюємо основне кільце (1440 тонких сегментів)
+        sizes = [1] * 1440
+        ax.pie(sizes, colors=display_colors, startangle=90, counterclock=False, 
+               wedgeprops=dict(width=0.4, edgecolor='none', linewidth=0))
+        
+        # ЛОГІКА НАКЛАДАННЯ (ДРУГИЙ ШАР ПІСЛЯ СТРІЛКИ)
+        # Показуємо ЗАВТРАШНІЙ вечір поверх сьогоднішнього, якщо він відрізняється
+        if tomorrow_data and len(tomorrow_data) == 48:
+            for m in range(current_minute, 1440):
+                t_status = get_status_at_min(tomorrow_data, m)
+                d_status = get_status_at_min(day_data, m)
+                
+                # Показуємо оверлей лише якщо завтра інша ситуація (світло/немає світла)
+                if t_status != d_status and t_status != "unknown":
+                    # Малюємо лише відключення або потенційні відключення зовні
+                    if t_status in ["off", "possible"]:
+                        angle_start = 90 - (m * (360/1440))
+                        angle_end = 90 - ((m + 1) * (360/1440))
+                        color = color_map.get(t_status, COLOR_UNKNOWN)
+                        p = patches.Wedge((0, 0), 1.08, angle_end, angle_start, width=0.06, 
+                                          color=color, alpha=1.0, zorder=10)
+                        ax.add_patch(p)
+                    # Якщо завтра БУДЕ світло, а сьогодні НЕМАЄ - можна теж показати (зеленим)
+                    elif t_status == "on" and d_status in ["off", "possible"]:
+                        angle_start = 90 - (m * (360/1440))
+                        angle_end = 90 - ((m + 1) * (360/1440))
+                        color = color_map.get("on", COLOR_ON)
+                        p = patches.Wedge((0, 0), 1.08, angle_end, angle_start, width=0.06, 
+                                          color=color, alpha=1.0, zorder=10)
+                        ax.add_patch(p)
+    else:
+        # Класичний режим (48 сегментів)
+        sizes = [1] * 48
+        colors = [color_map.get(s, COLOR_UNKNOWN) for s in day_data]
+        ax.pie(sizes, colors=colors, startangle=90, counterclock=False, 
+               wedgeprops=dict(width=0.4, edgecolor='none', linewidth=0))
     
     # Встановлюємо межі осей явно, щоб зовнішні дуги не обрізалися
     ax.set_xlim(-1.15, 1.15)
@@ -117,36 +154,6 @@ def _generate_circle_view(
         y = r * np.sin(np.radians(angle))
         ax.text(x, y, f"{i:02d}", ha='center', va='center', 
                 fontsize=11, fontweight='bold', color=COLOR_TEXT_WHITE)
-
-    # ЛОГІКА НАКЛАДАННЯ (ДРУГИЙ ШАР ДЛЯ ПЕРЕКРИТИХ ВІДКЛЮЧЕНЬ)
-    if dynamic:
-        current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
-        
-        # 1. Зовнішня дуга: Завтрашні відключення, що зараз перекриті Сьогоднішнім днем
-        if tomorrow_data and len(tomorrow_data) == 48:
-            for i in range(current_idx, 48):
-                t_status = tomorrow_data[i]
-                if t_status in ["off", "possible"]:
-                    angle_start = 90 - (i * 7.5)
-                    angle_end = 90 - ((i + 1) * 7.5)
-                    color = color_map.get(t_status, COLOR_UNKNOWN)
-                    # Трішки товстіша і з вираженим відступом
-                    p = patches.Wedge((0, 0), 1.08, angle_end, angle_start, width=0.06, 
-                                      color=color, alpha=1.0, zorder=10)
-                    ax.add_patch(p)
-        
-        # 2. Внутрішня дуга: Сьогоднішні відключення, що зараз перекриті Завтрашнім днем (минуле)
-        if day_data and len(day_data) == 48:
-            for i in range(0, current_idx):
-                d_status = day_data[i]
-                if d_status in ["off", "possible"]:
-                    angle_start = 90 - (i * 7.5)
-                    angle_end = 90 - ((i + 1) * 7.5)
-                    color = color_map.get(d_status, COLOR_UNKNOWN)
-                    # Малюємо внутрішній шар (під основним кільцем)
-                    p = patches.Wedge((0, 0), 0.58, angle_end, angle_start, width=0.06, 
-                                      color=color, alpha=1.0, zorder=10)
-                    ax.add_patch(p)
 
     # Стрілка поточного часу
     if show_time_marker:
