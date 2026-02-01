@@ -6,6 +6,7 @@ from aiogram import Bot
 from database.db import get_all_users, update_user_last_reminder
 from services.api_client import SvitloApiClient
 from services.image_generator import convert_api_to_half_list
+from services.utils import is_now_quiet_hours
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -19,9 +20,17 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
     now = datetime.now()
     
     for user in users:
-        tg_id, region_id, queue_id_json, _, _, reminder_min, last_rem, _, _, _, _, _, _ = user
+        # user: (tg_id, region_id, queue_id_json, last_hash, mode, reminder_min, last_rem, last_upd, notif_enabled, qh_start, qh_end, last_status_rem, last_ann)
+        tg_id, region_id, queue_id_json, _, _, reminder_min, last_rem, _, notif_enabled, qh_start, qh_end, _, _ = user
         
+        if not notif_enabled:
+            continue
+
         if not reminder_min or reminder_min <= 0:
+            continue
+            
+        if is_now_quiet_hours(qh_start, qh_end, now):
+            _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}). Skipping reminder.")
             continue
             
         try:

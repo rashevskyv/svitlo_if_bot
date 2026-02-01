@@ -14,6 +14,7 @@ from typing import Optional
 
 from database.db import init_db, get_all_users, update_user_hash
 from services.api_client import SvitloApiClient
+from services.utils import is_now_quiet_hours
 from handlers.registration import send_schedule
 from handlers import registration
 
@@ -117,27 +118,6 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
     _LOGGER.debug(f"is_change_relevant: No relevant changes found for mode {mode}")
     return False
 
-def is_now_quiet_hours(start_str: Optional[str], end_str: Optional[str], current_dt: datetime) -> bool:
-    if not start_str or not end_str:
-        return False
-    
-    try:
-        h_s, m_s = map(int, start_str.split(':'))
-        h_e, m_e = map(int, end_str.split(':'))
-        
-        now_time = current_dt.time()
-        start_time = now_time.replace(hour=h_s, minute=m_s, second=0, microsecond=0)
-        end_time = now_time.replace(hour=h_e, minute=m_e, second=0, microsecond=0)
-        
-        if start_time < end_time:
-            # Денний інтервал, наприклад 08:00 - 22:00
-            return start_time <= now_time <= end_time
-        else:
-            # Нічний інтервал, наприклад 22:00 - 08:00
-            return now_time >= start_time or now_time <= end_time
-    except Exception as e:
-        _LOGGER.error(f"Error parsing quiet hours: {e}")
-        return False
 
 async def check_updates():
     """
