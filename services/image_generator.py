@@ -114,6 +114,28 @@ def _generate_circle_view(
         ax.text(x, y, f"{i:02d}", ha='center', va='center', 
                 fontsize=11, fontweight='bold', color=COLOR_TEXT_WHITE)
 
+    # ЛОГІКА НАКЛАДАННЯ (ДРУГИЙ ШАР ДЛЯ ПЕРЕКРИТИХ ВІДКЛЮЧЕНЬ)
+    if dynamic and tomorrow_data and len(tomorrow_data) == 48:
+        current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
+        # Перевіряємо сектори від зараз до кінця дня (сьогодні)
+        # Якщо в цей час завтра є відключення - малюємо зовнішню дугу
+        for i in range(current_idx, 48):
+            t_status = tomorrow_data[i]
+            if t_status in ["off", "possible"]:
+                # Ми малюємо тонку дугу зовні
+                # Кут для i-го сегмента
+                angle_start = 90 - (i * 7.5)
+                angle_end = 90 - ((i + 1) * 7.5)
+                
+                color = color_map.get(t_status, COLOR_UNKNOWN)
+                # Малюємо зовнішній "шар"
+                # Wedge(center, r, theta1, theta2, width, ...)
+                # theta1 - початок (менший кут в matplotlib), theta2 - кінець
+                # Оскільки ми йдемо за годинниковою стрілкою (startangle=90), кути зменшуються
+                p = patches.Wedge((0, 0), 1.05, angle_end, angle_start, width=0.04, 
+                                  color=color, alpha=0.9, zorder=4)
+                ax.add_patch(p)
+
     # Стрілка поточного часу
     if show_time_marker:
         current_angle = 90 - (current_dt.hour * 15 + current_dt.minute * 0.25)
@@ -283,6 +305,27 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
         m = int((hours - h) * 60)
         return f"{h} год" + (f" {m} хв" if m else "")
 
+    def get_intervals(half_list):
+        intervals = []
+        start_time = None
+        for i, status in enumerate(half_list):
+            if status in ["off", "possible"] and start_time is None:
+                start_time = i
+            elif status not in ["off", "possible"] and start_time is not None:
+                intervals.append((start_time, i))
+                start_time = None
+        if start_time is not None:
+            intervals.append((start_time, len(half_list)))
+        
+        formatted = []
+        for s, e in intervals:
+            s_h, s_m = divmod(s * 30, 60)
+            e_h, e_m = divmod(e * 30, 60)
+            if e_h == 24: e_h, e_m = 0, 0
+            formatted.append(f"{s_h:02d}:{s_m:02d}–{e_h:02d}:{e_m:02d}")
+        return formatted
+
+    today_intervals = get_intervals(today_half)
     today_stats = calc_stats(today_half)
     
     # Пошук наступної події
@@ -335,7 +378,22 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
         
         forecast = f"🕒 Наступне **{action}**: о **{time_str}**\n⏳ Залишилось: **{diff_h}г {diff_m}хв**\n📏 Тривалість: **{dur_str}**"
 
-    res = f"{forecast}\n\n📊 **Статистика відключень:**\n• Сьогодні: **{today_stats}**"
+    res = f"{forecast}\n\n"
+    
+    # Списки інтервалів
+    if today_intervals:
+        res += f"🔴 **Відключення сьогодні:**\n{', '.join(today_intervals)}\n"
+    else:
+        res += "🟢 **Сьогодні без відключень**\n"
+        
+    if tomorrow_half and len(tomorrow_half) == 48:
+        tomorrow_intervals = get_intervals(tomorrow_half)
+        if tomorrow_intervals:
+            res += f"🔴 **Відключення завтра:**\n{', '.join(tomorrow_intervals)}\n"
+        else:
+            res += "🟢 **Завтра без відключень**\n"
+
+    res += f"\n📊 **Статистика відключень:**\n• Сьогодні: **{today_stats}**"
     
     if tomorrow_half and len(tomorrow_half) == 48:
         tomorrow_stats = calc_stats(tomorrow_half)
