@@ -193,8 +193,8 @@ async def check_updates():
     _LOGGER.info(f"Checking updates for {len(all_users)} users...")
     
     for user in all_users:
-            # user: (tg_id, region_id, queue_id, hash, mode, rem, last_rem, last_upd, notif_en, qh_s, qh_e, last_status_rem, last_ann)
-            tg_id, region_id, queue_id_json, last_hash, mode, _, _, last_update_str, notif_enabled, qh_start, qh_end, last_status_rem_str, _ = user
+            # user: (tg_id, region_id, queue_id, hash, mode, rem, last_rem, last_upd, notif_en, qh_s, qh_e, qh_silent, last_status_rem, last_ann)
+            tg_id, region_id, queue_id_json, last_hash, mode, _, _, last_update_str, notif_enabled, qh_start, qh_end, qh_silent, last_status_rem_str, _ = user
             
             now_dt = datetime.now()
 
@@ -229,9 +229,15 @@ async def check_updates():
                 continue # Якщо сповіщення вимкнені, оновлення не слати далі
 
             # --- ПЕРЕВІРКА ТИХИХ ГОДИН ---
-            silent = is_now_quiet_hours(qh_start, qh_end, now_dt)
-            if silent:
+            in_qh = is_now_quiet_hours(qh_start, qh_end, now_dt)
+            if in_qh:
+                if not qh_silent:
+                    _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}) and 'Skip' mode is active. Skipping notification.")
+                    continue
+                silent = True
                 _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}). Sending silent notification.")
+            else:
+                silent = False
 
             last_update_dt = None
             if last_update_str:

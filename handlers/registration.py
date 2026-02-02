@@ -473,6 +473,8 @@ async def show_quiet_hours_menu(message: Message, state: FSMContext):
     notif_enabled = user[8] if user and len(user) > 8 else 1
     q_start = user[9] if user and len(user) > 9 else None
     q_end = user[10] if user and len(user) > 10 else None
+    qh_silent = user[11] if user and len(user) > 11 else 1
+    qh_mode_str = "🔕 Без звуку" if qh_silent else "🚫 Не надсилати"
 
     status = "✅ Увімкнені" if notif_enabled else "❌ Вимкнені"
     qh_status = f"🌙 Тихі години: **{q_start} - {q_end}**" if q_start and q_end else "🌙 Тихі години: **не встановлено**"
@@ -480,13 +482,15 @@ async def show_quiet_hours_menu(message: Message, state: FSMContext):
     text = (
         f"🔔 **Налаштування сповіщень**\n\n"
         f"Статус сповіщень: {status}\n"
-        f"{qh_status}\n\n"
-        f"Тихі години — це час, коли бот не буде надсилати вам автоматичні оновлення (наприклад, вночі)."
+        f"{qh_status}\n"
+        f"Поведінка в тихі години: **{qh_mode_str}**\n\n"
+        f"Тихі години — це час, коли бот не буде турбувати вас звуком (або зовсім не буде писати), якщо ви так налаштуєте."
     )
 
     buttons = [
         [KeyboardButton(text="🔔 Увімкнути сповіщення" if not notif_enabled else "🔕 Вимкнути сповіщення")],
         [KeyboardButton(text="⏰ Встановити тихі години")],
+        [KeyboardButton(text="🔇 Режим: Без звуку" if not qh_silent else "🔈 Режим: Не надсилати")],
         [KeyboardButton(text="🗑 Скинути тихі години")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
@@ -501,10 +505,14 @@ async def handle_quiet_hours_settings(message: Message, state: FSMContext):
         await cmd_settings(message, state)
         return
 
-    from database.db import update_user_notifications, update_user_quiet_hours
+    from database.db import update_user_notifications, update_user_quiet_hours, update_user_quiet_hours_mode
     if choice in ["🔔 Увімкнути сповіщення", "🔕 Вимкнути сповіщення"]:
         enabled = 1 if "Увімкнути" in choice else 0
         await update_user_notifications(message.from_user.id, enabled)
+        await show_quiet_hours_menu(message, state)
+    elif "Режим:" in choice:
+        is_silent = 1 if "Без звуку" in choice else 0
+        await update_user_quiet_hours_mode(message.from_user.id, is_silent)
         await show_quiet_hours_menu(message, state)
     elif choice == "⏰ Встановити тихі години":
         instructions = (
@@ -612,8 +620,8 @@ async def send_schedule(target: Any, tg_id: int, silent: bool = False):
             await target.answer("Ви ще не зареєстровані. Будь ласка, скористайтеся командою /start")
         return
     
-    # user: (tg_id, region_id, queue_id_json, hash, mode, rem_min, last_rem, last_upd, notif_en, qh_s, qh_e, last_status_rem, last_ann)
-    _, region_id, queue_id_json, _, mode, _, _, _, notif_enabled, qh_start, qh_end, _, _ = user
+    # user: (tg_id, region_id, queue_id_json, hash, mode, rem_min, last_rem, last_upd, notif_en, qh_s, qh_e, qh_silent, last_status_rem, last_ann)
+    _, region_id, queue_id_json, _, mode, _, _, _, notif_enabled, qh_start, qh_end, qh_silent, _, _ = user
     if not mode: mode = "classic"
     
     try:
@@ -703,7 +711,8 @@ async def send_schedule(target: Any, tg_id: int, silent: bool = False):
         if not notif_enabled:
             notif_status_str = "\n⚠️ **Сповіщення вимкнені**"
         elif qh_start and qh_end:
-            notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end} (без звуку)**"
+            mode_desc = "без звуку" if qh_silent else "пропускаються"
+            notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end} ({mode_desc})**"
 
         queue_media = []
         for i, img_buf in enumerate(images_to_send):

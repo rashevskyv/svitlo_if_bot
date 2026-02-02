@@ -20,15 +20,21 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
     now = datetime.now()
     
     for user in users:
-        # user: (tg_id, region_id, queue_id_json, last_hash, mode, reminder_min, last_rem, last_upd, notif_enabled, qh_start, qh_end, last_status_rem, last_ann)
-        tg_id, region_id, queue_id_json, _, _, reminder_min, last_rem, _, notif_enabled, qh_start, qh_end, _, _ = user
+        # user: (tg_id, region_id, queue_id_json, hash, mode, rem_min, last_rem, last_upd, notif_en, qh_s, qh_e, qh_silent, last_status_rem, last_ann)
+        tg_id, region_id, queue_id_json, _, _, reminder_min, last_rem, _, notif_enabled, qh_start, qh_end, qh_silent, _, _ = user
         
         if not notif_enabled or not reminder_min or reminder_min <= 0:
             continue
             
-        silent = is_now_quiet_hours(qh_start, qh_end, now)
-        if silent:
+        in_qh = is_now_quiet_hours(qh_start, qh_end, now)
+        if in_qh:
+            if not qh_silent:
+                _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}) and 'Skip' mode is active. Skipping reminder.")
+                continue
+            silent = True
             _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}). Reminder will be silent.")
+        else:
+            silent = False
             
         try:
             queues_data = json.loads(queue_id_json)

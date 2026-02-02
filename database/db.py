@@ -16,6 +16,7 @@ async def init_db():
                 notifications_enabled INTEGER DEFAULT 1,
                 quiet_hours_start TEXT,
                 quiet_hours_end TEXT,
+                quiet_hours_silent INTEGER DEFAULT 1,
                 last_status_reminder_at TEXT,
                 last_announcement_id TEXT
             )
@@ -59,7 +60,7 @@ async def init_db():
             pass
 
         try:
-            await db.execute("ALTER TABLE users ADD COLUMN last_announcement_id TEXT")
+            await db.execute("ALTER TABLE users ADD COLUMN quiet_hours_silent INTEGER DEFAULT 1")
         except aiosqlite.OperationalError:
             pass
 
@@ -85,7 +86,7 @@ async def get_user(telegram_id: int) -> Optional[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
             SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at,
-                   notifications_enabled, quiet_hours_start, quiet_hours_end, last_status_reminder_at, last_announcement_id
+                   notifications_enabled, quiet_hours_start, quiet_hours_end, quiet_hours_silent, last_status_reminder_at, last_announcement_id
             FROM users WHERE telegram_id = ?
         """, (telegram_id,)) as cursor:
             row = await cursor.fetchone()
@@ -97,7 +98,7 @@ async def get_all_users() -> List[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
             SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at,
-                   notifications_enabled, quiet_hours_start, quiet_hours_end, last_status_reminder_at, last_announcement_id
+                   notifications_enabled, quiet_hours_start, quiet_hours_end, quiet_hours_silent, last_status_reminder_at, last_announcement_id
             FROM users
         """) as cursor:
             return await cursor.fetchall()
@@ -175,7 +176,7 @@ async def get_users_by_region(region_id: str) -> List[Tuple]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute("""
             SELECT telegram_id, region_id, queue_id, last_schedule_hash, display_mode, reminder_minutes, last_reminder_at, last_updated_at,
-                   notifications_enabled, quiet_hours_start, quiet_hours_end, last_status_reminder_at, last_announcement_id
+                   notifications_enabled, quiet_hours_start, quiet_hours_end, quiet_hours_silent, last_status_reminder_at, last_announcement_id
             FROM users WHERE region_id = ?
         """, (region_id,)) as cursor:
             return await cursor.fetchall()
@@ -188,6 +189,11 @@ async def update_user_notifications(telegram_id: int, enabled: int):
 async def update_user_quiet_hours(telegram_id: int, start_time: Optional[str], end_time: Optional[str]):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE users SET quiet_hours_start = ?, quiet_hours_end = ? WHERE telegram_id = ?", (start_time, end_time, telegram_id))
+        await db.commit()
+
+async def update_user_quiet_hours_mode(telegram_id: int, is_silent: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE users SET quiet_hours_silent = ? WHERE telegram_id = ?", (is_silent, telegram_id))
         await db.commit()
 
 async def update_user_status_reminder(telegram_id: int, timestamp: str):
