@@ -43,8 +43,8 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
         except:
             queues_data = [{"id": queue_id_json, "alias": queue_id_json}]
             
-        # Групуємо відключення за часом: {off_time: [alias1, alias2]}
-        upcoming_off_events = {}
+        # Групуємо події за часом: {time: {'off': [aliases], 'on': [aliases]}}
+        upcoming_events = {}
         
         for q in queues_data:
             schedule_data = await api_client.fetch_schedule(region_id, q["id"])
@@ -58,40 +58,75 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
             # Поточний індекс (кожні 30 хв)
             current_idx = now.hour * 2 + (1 if now.minute >= 30 else 0)
             
-            # Шукаємо ПЕРШЕ відключення від зараз
+            # Шукаємо ПЕРШУ подію кожного типу від зараз
+            found_off = False
+            found_on = False
+            
             for i in range(current_idx, len(all_half)):
-                if all_half[i] == "off":
-                    if i == 0 or all_half[i-1] != "off":
+                # Відключення
+                if not found_off and all_half[i] in ["off", "possible"]:
+                    if i == 0 or all_half[i-1] not in ["off", "possible"]:
                         off_hour = (i % 48) // 2
                         off_min = (i % 2) * 30
                         off_date = now.date() if i < 48 else now.date() + timedelta(days=1)
                         off_time = datetime.combine(off_date, datetime.min.time()) + timedelta(hours=off_hour, minutes=off_min)
                         
-                        if off_time not in upcoming_off_events:
-                            upcoming_off_events[off_time] = []
-                        upcoming_off_events[off_time].append(q["alias"])
-                        break 
+                        if off_time not in upcoming_events:
+                            upcoming_events[off_time] = {'off': [], 'on': []}
+                        upcoming_events[off_time]['off'].append(q["alias"])
+                        found_off = True
+                
+                # Включення (restore)
+                if not found_on and all_half[i] in ["on", "unknown"]:
+                    # Включення — це перехід від off/possible до on/unknown
+                    if i > 0 and all_half[i-1] in ["off", "possible"]:
+                        on_hour = (i % 48) // 2
+                        on_min = (i % 2) * 30
+                        on_date = now.date() if i < 48 else now.date() + timedelta(days=1)
+                        on_time = datetime.combine(on_date, datetime.min.time()) + timedelta(hours=on_hour, minutes=on_min)
+                        
+                        if on_time not in upcoming_events:
+                            upcoming_events[on_time] = {'off': [], 'on': []}
+                        upcoming_events[on_time]['on'].append(q["alias"])
+                        found_on = True
+                
+                if found_off and found_on:
+                    break
 
-        if not upcoming_off_events:
+        if not upcoming_events:
             continue
 
-        # Знаходимо найближчий час відключення серед усіх черг
-        earliest_off_time = min(upcoming_off_events.keys())
-        diff_min = (earliest_off_time - now).total_seconds() / 60
+        # Знаходимо найближчий час події серед усіх черг
+        earliest_time = min(upcoming_events.keys())
+        diff_min = (earliest_time - now).total_seconds() / 60
         
-        # Ідентифікатор нагадування базується ТІЛЬКИ на часі, щоб уникнути спаму при декількох чергах
-        event_id = earliest_off_time.strftime("%Y%m%d%H%M")
+        events_at_time = upcoming_events[earliest_time]
+        
+        # Визначаємо пріоритетний тип події для ID (або комбінований)
+        # Якщо в один час і вкл і викл (різні черги), генеруємо спільний ID
+        event_types = []
+        if events_at_time['off']: event_types.append("off")
+        if events_at_time['on']: event_types.append("on")
+        
+        event_id = f"{'_'.join(event_types)}_{earliest_time.strftime('%Y%m%d%H%M')}"
         
         if 0 < diff_min <= reminder_min:
             if last_rem != event_id:
-                relevant_aliases = upcoming_off_events[earliest_off_time]
-                aliases_str = ", ".join([f"**{a}**" for a in relevant_aliases])
-                queue_word = "чергою" if len(relevant_aliases) == 1 else "чергами"
+                _LOGGER.info(f"Sending reminder for {tg_id} at {earliest_time}: {events_at_time}")
                 
-                _LOGGER.info(f"Sending reminder to {tg_id} for time {event_id} (queues: {relevant_aliases})")
+                lines = []
+                if events_at_time['off']:
+                    aliases = ", ".join([f"**{a}**" for a in events_at_time['off']])
+                    word = "чергою" if len(events_at_time['off']) == 1 else "чергами"
+                    lines.append(f"🔴 очікується **відключення** світла за {word} {aliases}")
+                
+                if events_at_time['on']:
+                    aliases = ", ".join([f"**{a}**" for a in events_at_time['on']])
+                    word = "чергою" if len(events_at_time['on']) == 1 else "чергами"
+                    lines.append(f"🟢 очікується **включення** світла за {word} {aliases}")
                 
                 try:
-                    msg = f"⚠️ **Нагадування!**\nЧерез {int(diff_min)} хв очікується відключення світла за {queue_word} {aliases_str} ({earliest_off_time.strftime('%H:%M')})."
+                    msg = f"⚠️ **Нагадування!**\nЧерез {int(diff_min)} хв ({earliest_time.strftime('%H:%M')}):\n" + "\n".join(lines)
                     await bot.send_message(tg_id, msg, parse_mode="Markdown", disable_notification=silent)
                     await update_user_last_reminder(tg_id, event_id)
                 except Exception as e:
