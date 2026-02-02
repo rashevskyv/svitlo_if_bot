@@ -281,7 +281,7 @@ async def check_updates():
                         _LOGGER.debug(f"Change for queue {q['id']} deemed irrelevant for user {tg_id}")
                 
                 if not is_relevant and last_hash is not None:
-                    _LOGGER.info(f"Skipping notification for user {tg_id} (irrelevant changes for mode {mode})")
+                    _LOGGER.info(f"Skipping notification for user {tg_id} (irrelevant changes for mode {mode}). Status unchanged in relevant time slots.")
                     await update_user_hash(tg_id, new_hash)
                     continue
 
