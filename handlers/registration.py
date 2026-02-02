@@ -591,7 +591,7 @@ async def handle_quiet_hours_confirm(message: Message, state: FSMContext):
         await message.answer("Налаштування збережено!")
         await show_quiet_hours_menu(message, state)
 
-async def send_schedule(target: Any, tg_id: int):
+async def send_schedule(target: Any, tg_id: int, silent: bool = False):
     """
     Універсальна функція для відправки графіку.
     Використовує ImageCache для classic/list режимів.
@@ -604,7 +604,7 @@ async def send_schedule(target: Any, tg_id: int):
     import json
     from database.db import update_user_hash
     
-    _LOGGER.info(f"Attempting to send schedule for user {tg_id}")
+    _LOGGER.info(f"Attempting to send schedule for user {tg_id} (silent={silent})")
     user = await get_user(tg_id)
     if not user:
         _LOGGER.warning(f"User {tg_id} not found in database")
@@ -626,7 +626,7 @@ async def send_schedule(target: Any, tg_id: int):
     # Надсилаємо вступне повідомлення першим
     if hasattr(target, "answer"):
         from handlers.registration import get_main_keyboard
-        await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard())
+        await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard(), disable_notification=silent)
     
     all_schedules = {}
     img_cache = ImageCache()
@@ -703,7 +703,7 @@ async def send_schedule(target: Any, tg_id: int):
         if not notif_enabled:
             notif_status_str = "\n⚠️ **Сповіщення вимкнені**"
         elif qh_start and qh_end:
-            notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end}**"
+            notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end} (без звуку)**"
 
         queue_media = []
         for i, img_buf in enumerate(images_to_send):
@@ -718,22 +718,24 @@ async def send_schedule(target: Any, tg_id: int):
         # Надсилаємо розклад для цієї черги
         if hasattr(target, "answer_photo"):
             if len(queue_media) > 1:
-                await target.answer_media_group(queue_media)
+                await target.answer_media_group(queue_media, disable_notification=silent)
             else:
                 await target.answer_photo(
                     queue_media[0].media,
                     caption=queue_media[0].caption,
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
+                    disable_notification=silent
                 )
         elif hasattr(target, "send_photo"):
             if len(queue_media) > 1:
-                await target.send_media_group(tg_id, queue_media)
+                await target.send_media_group(tg_id, queue_media, disable_notification=silent)
             else:
                 await target.send_photo(
                     tg_id,
                     queue_media[0].media,
                     caption=queue_media[0].caption,
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
+                    disable_notification=silent
                 )
 
     # Оновлюємо хеш користувача

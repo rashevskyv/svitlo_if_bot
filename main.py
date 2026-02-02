@@ -229,9 +229,9 @@ async def check_updates():
                 continue # Якщо сповіщення вимкнені, оновлення не слати далі
 
             # --- ПЕРЕВІРКА ТИХИХ ГОДИН ---
-            if is_now_quiet_hours(qh_start, qh_end, now_dt):
-                _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}). Postponing notification.")
-                continue
+            silent = is_now_quiet_hours(qh_start, qh_end, now_dt)
+            if silent:
+                _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}). Sending silent notification.")
 
             last_update_dt = None
             if last_update_str:
@@ -286,10 +286,10 @@ async def check_updates():
                     continue
 
                 if last_hash is not None:
-                    _LOGGER.info(f"Notifying user {tg_id} about schedule change (is_relevant={is_relevant}, mode={mode})")
+                    _LOGGER.info(f"Notifying user {tg_id} about schedule change (is_relevant={is_relevant}, mode={mode}, silent={silent})")
                     try:
-                        await bot.send_message(tg_id, "🔔 Розклад оновився!")
-                        await send_schedule(bot, tg_id)
+                        await bot.send_message(tg_id, "🔔 Розклад оновився!", disable_notification=silent)
+                        await send_schedule(bot, tg_id, silent=silent)
                     except Exception as e:
                         err_msg = str(e)
                         if "Forbidden: bot was blocked by the user" in err_msg or "chat not found" in err_msg:

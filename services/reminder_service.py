@@ -26,8 +26,9 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
         if not notif_enabled or not reminder_min or reminder_min <= 0:
             continue
             
-        if is_now_quiet_hours(qh_start, qh_end, now):
-            continue
+        silent = is_now_quiet_hours(qh_start, qh_end, now)
+        if silent:
+            _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}). Reminder will be silent.")
             
         try:
             queues_data = json.loads(queue_id_json)
@@ -85,7 +86,7 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
                 
                 try:
                     msg = f"⚠️ **Нагадування!**\nЧерез {int(diff_min)} хв очікується відключення світла за {queue_word} {aliases_str} ({earliest_off_time.strftime('%H:%M')})."
-                    await bot.send_message(tg_id, msg, parse_mode="Markdown")
+                    await bot.send_message(tg_id, msg, parse_mode="Markdown", disable_notification=silent)
                     await update_user_last_reminder(tg_id, event_id)
                 except Exception as e:
                     err_msg = str(e).lower()
