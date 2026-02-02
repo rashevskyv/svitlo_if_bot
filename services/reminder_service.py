@@ -23,81 +23,80 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
         # user: (tg_id, region_id, queue_id_json, last_hash, mode, reminder_min, last_rem, last_upd, notif_enabled, qh_start, qh_end, last_status_rem, last_ann)
         tg_id, region_id, queue_id_json, _, _, reminder_min, last_rem, _, notif_enabled, qh_start, qh_end, _, _ = user
         
-        if not notif_enabled:
-            continue
-
-        if not reminder_min or reminder_min <= 0:
+        if not notif_enabled or not reminder_min or reminder_min <= 0:
             continue
             
         if is_now_quiet_hours(qh_start, qh_end, now):
-            _LOGGER.info(f"User {tg_id} is in quiet hours ({qh_start}-{qh_end}). Skipping reminder.")
             continue
             
         try:
-            queues = json.loads(queue_id_json)
-            if not isinstance(queues, list):
-                queues = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
+            queues_data = json.loads(queue_id_json)
+            if not isinstance(queues_data, list):
+                queues_data = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
         except:
-            queues = [{"id": queue_id_json, "alias": queue_id_json}]
+            queues_data = [{"id": queue_id_json, "alias": queue_id_json}]
             
-        for q in queues:
+        # Групуємо відключення за часом: {off_time: [alias1, alias2]}
+        upcoming_off_events = {}
+        
+        for q in queues_data:
             schedule_data = await api_client.fetch_schedule(region_id, q["id"])
             if not schedule_data:
                 continue
                 
             today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
             tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
-            
             all_half = today_half + tomorrow_half
             
-            # Знаходимо найближче відключення
-            # Поточний індекс у списку 48+48 сегментів
+            # Поточний індекс (кожні 30 хв)
             current_idx = now.hour * 2 + (1 if now.minute >= 30 else 0)
             
-            next_off_idx = -1
+            # Шукаємо ПЕРШЕ відключення від зараз
             for i in range(current_idx, len(all_half)):
                 if all_half[i] == "off":
-                    # Перевіряємо, чи це початок блоку відключення
                     if i == 0 or all_half[i-1] != "off":
-                        next_off_idx = i
-                        break
-            
-            if next_off_idx != -1:
-                # Час початку відключення
-                off_hour = next_off_idx // 2
-                off_min = (next_off_idx % 2) * 30
+                        off_hour = (i % 48) // 2
+                        off_min = (i % 2) * 30
+                        off_date = now.date() if i < 48 else now.date() + timedelta(days=1)
+                        off_time = datetime.combine(off_date, datetime.min.time()) + timedelta(hours=off_hour, minutes=off_min)
+                        
+                        if off_time not in upcoming_off_events:
+                            upcoming_off_events[off_time] = []
+                        upcoming_off_events[off_time].append(q["alias"])
+                        break 
+
+        if not upcoming_off_events:
+            continue
+
+        # Знаходимо найближчий час відключення серед усіх черг
+        earliest_off_time = min(upcoming_off_events.keys())
+        diff_min = (earliest_off_time - now).total_seconds() / 60
+        
+        # Ідентифікатор нагадування базується ТІЛЬКИ на часі, щоб уникнути спаму при декількох чергах
+        event_id = earliest_off_time.strftime("%Y%m%d%H%M")
+        
+        if 0 < diff_min <= reminder_min:
+            if last_rem != event_id:
+                relevant_aliases = upcoming_off_events[earliest_off_time]
+                aliases_str = ", ".join([f"**{a}**" for a in relevant_aliases])
+                queue_word = "чергою" if len(relevant_aliases) == 1 else "чергами"
                 
-                # Дата відключення (сьогодні або завтра)
-                off_date = now.date() if next_off_idx < 48 else now.date() + timedelta(days=1)
-                off_time = datetime.combine(off_date, datetime.min.time()) + timedelta(hours=off_hour, minutes=off_min)
+                _LOGGER.info(f"Sending reminder to {tg_id} for time {event_id} (queues: {relevant_aliases})")
                 
-                # Скільки залишилося до відключення
-                diff = (off_time - now).total_seconds() / 60
-                
-                _LOGGER.info(f"Checking reminder for {tg_id}: off_time={off_time}, diff={diff}, reminder_min={reminder_min}")
-                
-                # Унікальний ідентифікатор цього відключення для запобігання дублів
-                event_id = f"{q['id']}_{off_time.strftime('%Y%m%d%H%M')}"
-                
-                if 0 < diff <= reminder_min:
-                    if last_rem != event_id:
-                        _LOGGER.info(f"Sending reminder to {tg_id} for event {event_id}")
-                        try:
-                            msg = f"⚠️ **Нагадування!**\nЧерез {int(diff)} хв очікується відключення світла за чергою **{q['alias']}** ({off_time.strftime('%H:%M')})."
-                            await bot.send_message(tg_id, msg, parse_mode="Markdown")
-                            await update_user_last_reminder(tg_id, event_id)
-                        except Exception as e:
-                            err_msg = str(e)
-                            if "Forbidden: bot was blocked by the user" in err_msg or "chat not found" in err_msg:
-                                _LOGGER.warning(f"User {tg_id} blocked the bot or chat not found. Removing from DB.")
-                                from database.db import DB_PATH
-                                import aiosqlite
-                                async with aiosqlite.connect(DB_PATH) as db:
-                                    await db.execute("DELETE FROM users WHERE telegram_id = ?", (tg_id,))
-                                    await db.commit()
-                            else:
-                                _LOGGER.error(f"Failed to send reminder to {tg_id}: {e}")
+                try:
+                    msg = f"⚠️ **Нагадування!**\nЧерез {int(diff_min)} хв очікується відключення світла за {queue_word} {aliases_str} ({earliest_off_time.strftime('%H:%M')})."
+                    await bot.send_message(tg_id, msg, parse_mode="Markdown")
+                    await update_user_last_reminder(tg_id, event_id)
+                except Exception as e:
+                    err_msg = str(e).lower()
+                    if "forbidden" in err_msg or "chat not found" in err_msg:
+                        _LOGGER.warning(f"User {tg_id} blocked the bot. Removing.")
+                        from database.db import DB_PATH
+                        import aiosqlite
+                        async with aiosqlite.connect(DB_PATH) as db:
+                            await db.execute("DELETE FROM users WHERE telegram_id = ?", (tg_id,))
+                            await db.commit()
                     else:
-                        _LOGGER.info(f"Reminder already sent for {event_id}")
-                else:
-                    _LOGGER.info(f"Diff {diff} is not in range (0, {reminder_min}]")
+                        _LOGGER.error(f"Failed to send reminder to {tg_id}: {e}")
+            else:
+                _LOGGER.debug(f"Reminder for {tg_id} at {event_id} already sent.")
