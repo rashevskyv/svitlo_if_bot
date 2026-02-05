@@ -360,7 +360,7 @@ async def main():
     scheduler.add_job(check_reminders, "interval", minutes=1, args=[bot, api_client])
     
     # Feature Announcements at 12:00
-    scheduler.add_job(broadcast_announcements, "cron", hour=12, minute=0)
+    # scheduler.add_job(broadcast_announcements, "cron", hour=12, minute=0)
     
     scheduler.start()
     
