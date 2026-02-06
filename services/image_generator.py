@@ -307,12 +307,12 @@ def convert_api_to_half_list(day_schedule: dict) -> List[str]:
 
 def is_schedule_empty(half_list: List[str]) -> bool:
     """
-    Перевіряє, чи є графік порожнім або чи складається він лише з 'є світло' та 'невідомо'.
-    Для нашого бота це означає, що офіційного графіка з відключеннями ще немає.
+    Перевіряє, чи є графік порожнім (повністю невідомим).
+    Якщо є хоча б один визначений стан (світло є/немає/можливо) - вважаємо графік наявним.
     """
     if not half_list: return True
-    # Якщо немає жодного відключення - вважаємо порожнім/неопублікованим
-    return not any(s in ["off", "possible"] for s in half_list)
+    # Вважаємо порожнім, якщо немає жодного визначеного стану
+    return not any(s in ["on", "off", "possible"] for s in half_list)
 
 def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current_dt: datetime) -> str:
     """
@@ -407,11 +407,12 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
         res += "🟢 **Сьогодні без відключень**\n"
         
     if tomorrow_half and len(tomorrow_half) == 48:
-        tomorrow_intervals = get_intervals(tomorrow_half)
-        if tomorrow_intervals:
-            res += f"🔴 **Відключення завтра:**\n{', '.join(tomorrow_intervals)}\n"
-        # Більше не пишемо "Завтра без відключень", якщо графік порожній або зелений,
-        # бо це часто вводить в оману, коли графік ще просто не опубліковано.
+        if not is_schedule_empty(tomorrow_half):
+            tomorrow_intervals = get_intervals(tomorrow_half)
+            if tomorrow_intervals:
+                res += f"🔴 **Відключення завтра:**\n{', '.join(tomorrow_intervals)}\n"
+            else:
+                res += "🟢 **Завтра без відключень**\n"
 
     res += f"\n📊 **Статистика відключень:**\n• Сьогодні: **{today_stats}**"
     
