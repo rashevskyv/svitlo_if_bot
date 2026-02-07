@@ -219,7 +219,13 @@ class SvitloApiClient:
                     
                     # Проходимо по 30-хвилинних слотах
                     curr_h, curr_m = start_h, start_m
-                    while (curr_h < end_h) or (curr_h == end_h and curr_m < end_m):
+                    
+                    # FIX: Handle midnight as end of day
+                    effective_end_h = end_h
+                    if end_h == 0 and end_m == 0 and start_h > 0:
+                        effective_end_h = 24
+                    
+                    while (curr_h < effective_end_h) or (curr_h == effective_end_h and curr_m < end_m):
                         day_schedule[f"{curr_h:02d}:{curr_m:02d}"] = 2 # 2 - немає світла
                         curr_m += 30
                         if curr_m >= 60:
