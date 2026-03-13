@@ -12,6 +12,10 @@ async def init_db():
                 telegram_id INTEGER PRIMARY KEY,
                 region_id TEXT NOT NULL,
                 queue_id TEXT NOT NULL,
+                last_schedule_hash TEXT,
+                display_mode TEXT DEFAULT 'classic',
+                reminder_minutes INTEGER DEFAULT 0,
+                last_reminder_at TEXT,
                 last_updated_at TEXT,
                 notifications_enabled INTEGER DEFAULT 1,
                 quiet_hours_start TEXT,
@@ -23,47 +27,27 @@ async def init_db():
         """)
         await db.commit()
 
-        # Міграції для існуючих БД
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN display_mode TEXT DEFAULT 'classic'")
-        except aiosqlite.OperationalError:
-            pass
-            
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN reminder_minutes INTEGER DEFAULT 0")
-        except aiosqlite.OperationalError:
-            pass
+        # Міграції для існуючих БД (додаємо колонки по одній, якщо їх немає)
+        migrations = [
+            "ALTER TABLE users ADD COLUMN last_schedule_hash TEXT",
+            "ALTER TABLE users ADD COLUMN display_mode TEXT DEFAULT 'classic'",
+            "ALTER TABLE users ADD COLUMN reminder_minutes INTEGER DEFAULT 0",
+            "ALTER TABLE users ADD COLUMN last_reminder_at TEXT",
+            "ALTER TABLE users ADD COLUMN last_updated_at TEXT",
+            "ALTER TABLE users ADD COLUMN notifications_enabled INTEGER DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN quiet_hours_start TEXT",
+            "ALTER TABLE users ADD COLUMN quiet_hours_end TEXT",
+            "ALTER TABLE users ADD COLUMN last_status_reminder_at TEXT",
+            "ALTER TABLE users ADD COLUMN quiet_hours_silent INTEGER DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN last_announcement_id TEXT"
+        ]
 
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN last_updated_at TEXT")
-        except aiosqlite.OperationalError:
-            pass
-            
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN notifications_enabled INTEGER DEFAULT 1")
-        except aiosqlite.OperationalError:
-            pass
-
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN quiet_hours_start TEXT")
-        except aiosqlite.OperationalError:
-            pass
-
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN quiet_hours_end TEXT")
-        except aiosqlite.OperationalError:
-            pass
-
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN last_status_reminder_at TEXT")
-        except aiosqlite.OperationalError:
-            pass
-
-        try:
-            await db.execute("ALTER TABLE users ADD COLUMN quiet_hours_silent INTEGER DEFAULT 1")
-        except aiosqlite.OperationalError:
-            pass
-
+        for migration in migrations:
+            try:
+                await db.execute(migration)
+            except aiosqlite.OperationalError:
+                pass # Колонка вже існує
+        
         await db.commit()
 
 async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[Dict[str, str]]):

@@ -9,6 +9,14 @@ from typing import Any, Optional, Dict
 
 _LOGGER = logging.getLogger(__name__)
 
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+}
+
 # Додаємо шлях до папки svitlo_live
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(CURRENT_DIR)
@@ -173,7 +181,7 @@ class SvitloApiClient:
             return None
         try:
             url = f"{IF_API_URL}?queue={queue}"
-            async with self._session.get(url, timeout=15) as resp:
+            async with self._session.get(url, headers=BROWSER_HEADERS, timeout=15) as resp:
                 if resp.status != 200:
                     _LOGGER.error(f"IF API error {resp.status} for queue {queue}")
                     return None
@@ -267,7 +275,7 @@ class SvitloApiClient:
         try:
             # 1. Отримуємо основні дані
             url_with_cache_bust = f"{DTEK_API_URL}?t={int(time.time())}"
-            headers = {"Cache-Control": "no-cache", "Pragma": "no-cache"}
+            headers = BROWSER_HEADERS.copy()
             if self._etag: headers["If-None-Match"] = self._etag
 
             async with self._session.get(url_with_cache_bust, headers=headers, timeout=30) as resp:
@@ -334,7 +342,7 @@ class SvitloApiClient:
         if self._session is None:
             return []
         try:
-            async with self._session.get(IF_QUEUES_URL, timeout=15) as resp:
+            async with self._session.get(IF_QUEUES_URL, headers=BROWSER_HEADERS, timeout=15) as resp:
                 if resp.status != 200:
                     _LOGGER.error(f"IF Queues API error {resp.status}")
                     return []
