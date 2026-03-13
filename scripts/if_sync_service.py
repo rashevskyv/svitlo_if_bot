@@ -5,6 +5,10 @@ import os
 import sys
 import logging
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Add project root to sys.path to import modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -57,9 +61,39 @@ async def sync_if_data():
                 _LOGGER.warning(f"Failed to fetch data for queue {q}")
         
         if sync_result["schedules"]:
+            # Save locally
             with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
                 json.dump(sync_result, f, ensure_ascii=False, indent=2)
-            _LOGGER.info(f"Synchronization complete. Data saved to {OUTPUT_FILE}")
+            _LOGGER.info(f"Data saved locally to {OUTPUT_FILE}")
+
+            # Upload to Gist
+            gist_id = os.getenv("GIST_ID")
+            github_token = os.getenv("GITHUB_TOKEN")
+            
+            if gist_id and github_token:
+                _LOGGER.info(f"Uploading to Gist {gist_id}...")
+                url = f"https://api.github.com/gists/{gist_id}"
+                headers = {
+                    "Authorization": f"token {github_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+                payload = {
+                    "files": {
+                        "if_schedules.json": {
+                            "content": json.dumps(sync_result, ensure_ascii=False)
+                        }
+                    }
+                }
+                async with session.patch(url, headers=headers, json=payload) as resp:
+                    if resp.status == 200:
+                        _LOGGER.info("Successfully updated GitHub Gist")
+                    else:
+                        text = await resp.text()
+                        _LOGGER.error(f"Failed to update Gist: {resp.status} - {text}")
+            else:
+                _LOGGER.warning("GIST_ID or GITHUB_TOKEN not found in environment, skipping Gist upload")
+            
+            _LOGGER.info("Synchronization complete.")
         else:
             _LOGGER.error("Synchronization failed: No data fetched.")
 

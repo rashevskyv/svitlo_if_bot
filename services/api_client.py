@@ -384,6 +384,23 @@ class SvitloApiClient:
             except Exception as e:
                 _LOGGER.error(f"Failed to load local IF data: {e}")
 
+        # 0.1 Спробуємо завантажити з Gist, якщо є конфігурація
+        gist_id = os.getenv("GIST_ID")
+        if not local_data and gist_id and self._session:
+            try:
+                # Використовуємо пряме посилання на raw файл для швидкості
+                # Для цього нам потрібен нікнейм, але ми можемо отримати його через API 
+                # або просто спробувати URL rashevskyv (власник репозиторію)
+                gist_raw_url = f"https://gist.githubusercontent.com/rashevskyv/{gist_id}/raw/if_schedules.json"
+                async with self._session.get(gist_raw_url, timeout=10) as resp:
+                    if resp.status == 200:
+                        local_data = await resp.json()
+                        _LOGGER.info(f"Loaded IF data from GitHub Gist: {gist_id}")
+                    else:
+                        _LOGGER.warning(f"Failed to fetch Gist {gist_id}: {resp.status}")
+            except Exception as e:
+                _LOGGER.error(f"Error fetching IF data from Gist: {e}")
+
         # 1. Отримуємо список черг з сайту
         if self._if_api_blocked:
             _LOGGER.info("IF API is marked as blocked, skipping direct update. Using data from global proxy.")
