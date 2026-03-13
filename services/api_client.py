@@ -372,6 +372,17 @@ class SvitloApiClient:
         
         if not region_obj: return
 
+        # 0. Спробуємо завантажити локальний кеш, якщо він є
+        local_data = None
+        data_path = os.path.join(REPO_ROOT, "data", "if_schedules.json")
+        if os.path.exists(data_path):
+            try:
+                with open(data_path, "r", encoding="utf-8") as f:
+                    local_data = json.load(f)
+                _LOGGER.info(f"Loaded IF data from local sync file: {data_path}")
+            except Exception as e:
+                _LOGGER.error(f"Failed to load local IF data: {e}")
+
         # 1. Отримуємо список черг з сайту
         if self._if_api_blocked:
             _LOGGER.info("IF API is marked as blocked, skipping direct update. Using data from global proxy.")
@@ -403,6 +414,12 @@ class SvitloApiClient:
                 parsed_if = self._parse_if_schedule(raw_if, q)
                 if parsed_if:
                     new_if_schedules[q] = parsed_if
+        
+        # 4. Якщо пряме оновлення не дало результатів (або заблоковано), використовуємо локальні дані
+        if local_data and "schedules" in local_data:
+            for q_id, q_sched in local_data["schedules"].items():
+                if q_id not in new_if_schedules:
+                    new_if_schedules[q_id] = q_sched
         
         if new_if_schedules:
             # Оновлюємо розклад у об'єкті регіону
