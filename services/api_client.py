@@ -100,6 +100,7 @@ class SvitloApiClient:
         self._etag = None
         self._region_hashes = {} # region_cpu -> hash
         self._pending_changes = set() # region_cpu
+        self._if_api_blocked = False
         self._initialized = True
 
     async def fetch_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
@@ -182,6 +183,10 @@ class SvitloApiClient:
         try:
             url = f"{IF_API_URL}?queue={queue}"
             async with self._session.get(url, headers=BROWSER_HEADERS, timeout=15) as resp:
+                if resp.status == 403:
+                    _LOGGER.warning(f"IF API access forbidden (403) for queue {queue}. Likely geo-blocked.")
+                    self._if_api_blocked = True
+                    return None
                 if resp.status != 200:
                     _LOGGER.error(f"IF API error {resp.status} for queue {queue}")
                     return None
@@ -343,6 +348,10 @@ class SvitloApiClient:
             return []
         try:
             async with self._session.get(IF_QUEUES_URL, headers=BROWSER_HEADERS, timeout=15) as resp:
+                if resp.status == 403:
+                    _LOGGER.warning("IF Queues API access forbidden (403). Likely geo-blocked.")
+                    self._if_api_blocked = True
+                    return []
                 if resp.status != 200:
                     _LOGGER.error(f"IF Queues API error {resp.status}")
                     return []
@@ -364,21 +373,32 @@ class SvitloApiClient:
         if not region_obj: return
 
         # 1. Отримуємо список черг з сайту
-        queues = await self._fetch_if_queues()
+        if self._if_api_blocked:
+            _LOGGER.info("IF API is marked as blocked, skipping direct update. Using data from global proxy.")
+            queues = []
+        else:
+            queues = await self._fetch_if_queues()
         
-        # 2. Якщо не вдалося, використовуємо ті, що є в кеші
+        # 2. Якщо не вдалося (або заблоковано), використовуємо ті черги, що є в об'єкті регіону
         if not queues:
             queues = list(region_obj.get("schedule", {}).keys())
             
-        # 3. Якщо і в кеші пусто, використовуємо хардкод (fallback)
+        # 3. Якщо і в об'єкті пусто, використовуємо хардкод (fallback)
         if not queues:
             _LOGGER.warning("No queues found for IF, using fallback list")
             queues = [f"{g}.{s}" for g in range(1, 7) for s in range(1, 3)] # 1.1 ... 6.2
+
+        if self._if_api_blocked:
+            _LOGGER.info(f"IF schedules for {len(queues)} queues will be taken from global proxy (geo-blocked direct access).")
+            return
 
         _LOGGER.info(f"Updating IF schedules for {len(queues)} queues: {queues}")
         new_if_schedules = {}
         for q in queues:
             raw_if = await self._fetch_if_schedule(q)
+            if self._if_api_blocked:
+                _LOGGER.warning("IF API became blocked during batch update, stopping.")
+                break
             if raw_if:
                 parsed_if = self._parse_if_schedule(raw_if, q)
                 if parsed_if:
