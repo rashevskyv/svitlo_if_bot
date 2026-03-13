@@ -394,7 +394,7 @@ class SvitloApiClient:
                 gist_raw_url = f"https://gist.githubusercontent.com/rashevskyv/{gist_id}/raw/if_schedules.json"
                 async with self._session.get(gist_raw_url, timeout=10) as resp:
                     if resp.status == 200:
-                        local_data = await resp.json()
+                        local_data = await resp.json(content_type=None)
                         _LOGGER.info(f"Loaded IF data from GitHub Gist: {gist_id}")
                     else:
                         _LOGGER.warning(f"Failed to fetch Gist {gist_id}: {resp.status}")
