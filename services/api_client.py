@@ -4,7 +4,7 @@ import logging
 import sys
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Any, Optional, Dict
 
 _LOGGER = logging.getLogger(__name__)
@@ -435,9 +435,28 @@ class SvitloApiClient:
         
         # 4. Якщо пряме оновлення не дало результатів (або заблоковано), використовуємо локальні дані
         if local_data and "schedules" in local_data:
-            for q_id, q_sched in local_data["schedules"].items():
-                if q_id not in new_if_schedules:
-                    new_if_schedules[q_id] = q_sched
+            # Перевірка свіжості даних (10 хвилин)
+            is_fresh = True
+            updated_at_str = local_data.get("updated_at")
+            if updated_at_str:
+                try:
+                    updated_at = datetime.fromisoformat(updated_at_str)
+                    # Якщо в стрінзі немає таймзони, вважаємо що це UTC (новий формат)
+                    if updated_at.tzinfo is None:
+                        updated_at = updated_at.replace(tzinfo=timezone.utc)
+                    
+                    age = datetime.now(timezone.utc) - updated_at
+                    if age > timedelta(minutes=10):
+                        _LOGGER.warning(f"IF local/gist data is stale ({age.total_seconds()/60:.1f} min old). Using global proxy instead.")
+                        is_fresh = False
+                except Exception as e:
+                    _LOGGER.error(f"Error checking data freshness: {e}")
+                    is_fresh = False
+            
+            if is_fresh:
+                for q_id, q_sched in local_data["schedules"].items():
+                    if q_id not in new_if_schedules:
+                        new_if_schedules[q_id] = q_sched
         
         if new_if_schedules:
             # Оновлюємо розклад у об'єкті регіону

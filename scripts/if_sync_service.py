@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -43,7 +43,7 @@ async def sync_if_data():
         _LOGGER.info(f"Syncing {len(queues)} queues: {queues}")
         
         sync_result = {
-            "updated_at": datetime.now().isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "region_id": IF_REGION_ID,
             "schedules": {}
         }
