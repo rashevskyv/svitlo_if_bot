@@ -19,7 +19,8 @@ BROWSER_HEADERS = {
 
 # Додаємо шлях до папки svitlo_live
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.dirname(CURRENT_DIR)
+# Fallback to current directory if we can't find the parent reliably in some environments
+REPO_ROOT = os.getenv("REPO_ROOT", os.path.dirname(CURRENT_DIR))
 CONST_PATH = os.path.join(REPO_ROOT, "external", "svitlo_live", "custom_components", "svitlo_live", "const.py")
 
 def load_const_directly():
@@ -399,21 +400,21 @@ class SvitloApiClient:
             _LOGGER.warning("No queues found for IF, using fallback list")
             queues = [f"{g}.{s}" for g in range(1, 7) for s in range(1, 3)] # 1.1 ... 6.2
 
-        if self._if_api_blocked:
-            _LOGGER.info(f"IF schedules for {len(queues)} queues will be taken from global proxy (geo-blocked direct access).")
-            return
-
-        _LOGGER.info(f"Updating IF schedules for {len(queues)} queues: {queues}")
         new_if_schedules = {}
-        for q in queues:
-            raw_if = await self._fetch_if_schedule(q)
-            if self._if_api_blocked:
-                _LOGGER.warning("IF API became blocked during batch update, stopping.")
-                break
-            if raw_if:
-                parsed_if = self._parse_if_schedule(raw_if, q)
-                if parsed_if:
-                    new_if_schedules[q] = parsed_if
+        if self._if_api_blocked:
+            _LOGGER.info(f"IF schedules for {len(queues)} queues will be taken from global proxy or local sync (geo-blocked direct access).")
+        else:
+            _LOGGER.info(f"Updating IF schedules for {len(queues)} queues: {queues}")
+            # ... direct update logic ...
+            for q in queues:
+                raw_if = await self._fetch_if_schedule(q)
+                if self._if_api_blocked:
+                    _LOGGER.warning("IF API became blocked during batch update, stopping.")
+                    break
+                if raw_if:
+                    parsed_if = self._parse_if_schedule(raw_if, q)
+                    if parsed_if:
+                        new_if_schedules[q] = parsed_if
         
         # 4. Якщо пряме оновлення не дало результатів (або заблоковано), використовуємо локальні дані
         if local_data and "schedules" in local_data:
@@ -445,7 +446,7 @@ class SvitloApiClient:
                                 continue
                             old_q_sched[date_str][slot] = status
                 
-            _LOGGER.info(f"Successfully updated IF schedules from direct source")
+            _LOGGER.info(f"Successfully updated IF schedules (source: direct={not self._if_api_blocked}, local={local_data is not None})")
 
     def get_changed_regions(self, reset: bool = True) -> list[str]:
         """
