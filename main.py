@@ -52,6 +52,22 @@ scheduler = AsyncIOScheduler()
 api_client = None
 session = None
 
+def has_future_outages(sched: Optional[dict], current_dt: datetime) -> bool:
+    """Чи є в розкладі відключення (off/possible), починаючи з поточного півгодинного слоту."""
+    if not sched:
+        return False
+    from services.image_generator import convert_api_to_half_list
+    current_idx = current_dt.hour * 2 + (1 if current_dt.minute >= 30 else 0)
+    today_iso = current_dt.date().isoformat()
+    for date_str, day in sched.get("schedule", {}).items():
+        if date_str < today_iso:
+            continue
+        start_idx = current_idx if date_str == today_iso else 0
+        if any(s in ("off", "possible") for s in convert_api_to_half_list(day)[start_idx:]):
+            return True
+    return False
+
+
 def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: datetime, last_update_dt: Optional[datetime] = None) -> bool:
     """
     Improved version of is_change_relevant that checks all available dates.
@@ -65,8 +81,13 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
         _LOGGER.info(f"is_change_relevant: Emergency status changed: {old_sched.get('is_emergency')} -> {new_sched.get('is_emergency')}")
         return True
 
+    # Був зелений і лишився зеленим — зсув дат/нові порожні дні користувачу не цікаві
+    if not has_future_outages(old_sched, current_dt) and not has_future_outages(new_sched, current_dt):
+        _LOGGER.debug("is_change_relevant: No outages before or after, skipping")
+        return False
+
     from services.image_generator import convert_api_to_half_list
-    
+
     def get_sched_for_date(sched_obj, date_str):
         if sched_obj.get("date_today") == date_str:
             return convert_api_to_half_list(sched_obj["schedule"].get(date_str, {}))
@@ -276,6 +297,12 @@ async def check_updates():
                     # а хеш змінився - значить зміни були, але ми втратили "попередній" стан.
                     # В такому випадку обов'язково вважаємо зміни релевантними, щоб не пропустити оновлення.
                     if not old_s or (old_s and new_s and old_s["schedule"] == new_s["schedule"]):
+                        # ponytail: без історії не знаємо, що бачив користувач; зелений новий графік
+                        # пропускаємо, тож скасування відключень через рестарт/тихі години може загубитись.
+                        # Якщо це стане проблемою — зберігати в БД прапорець "останній надісланий мав відключення".
+                        if new_s and not new_s.get("is_emergency") and not has_future_outages(new_s, now_dt):
+                            _LOGGER.info(f"History lost for user {tg_id} (queue {q['id']}), but no upcoming outages. Skipping.")
+                            continue
                         _LOGGER.info(f"History lost or unavailable for user {tg_id} (queue {q['id']}), forcing relevance.")
                         is_relevant = True
                         break
