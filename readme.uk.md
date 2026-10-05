@@ -49,6 +49,8 @@
 - ... та багато інших через єдиний API.
 
 ## 💡 Автор
+Аудит затримки, результати тестів і команди діагностики: [звіт за 2026-10-05](docs/audit-2026-10-05.md).
+
 - GitHub: [@chaichuk](https://github.com/chaichuk)
 - Telegram: [@serhii_chaichuk](https://t.me/serhii_chaichuk)
 

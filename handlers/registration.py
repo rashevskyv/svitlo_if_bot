@@ -1,5 +1,7 @@
 import logging
 import re
+from services.input_parsing import parse_queues, parse_time_interval
+from services.utils import escape_markdown
 import json
 from aiogram import Router, F
 from aiogram.filters import Command, StateFilter
@@ -205,25 +207,6 @@ async def process_region(message: Message, state: FSMContext):
     )
     await state.set_state(Registration.waiting_for_queue)
 
-def parse_queues(input_str: str) -> List[Dict[str, str]]:
-    """
-    Parses input string like "4, 5.2 (Work), 6 (Home)" into a list of dicts.
-    """
-    # Split by comma
-    parts = [p.strip() for p in input_str.split(",")]
-    result = []
-    for part in parts:
-        # Match "queue (alias)" or just "queue"
-        match = re.match(r"^([\d.]+)\s*(?:\(([^)]+)\))?$", part)
-        if match:
-            q_id = match.group(1)
-            alias = match.group(2) or q_id
-            result.append({"id": q_id, "alias": alias})
-        else:
-            # Fallback for simple strings if regex fails
-            result.append({"id": part, "alias": part})
-    return result
-
 @router.message(Registration.waiting_for_queue)
 async def process_queue(message: Message, state: FSMContext):
     user_input = message.text.strip()
@@ -273,7 +256,7 @@ async def process_queue(message: Message, state: FSMContext):
     
     _LOGGER.info(f"User {message.from_user.id} registered with queues {valid_queues} in region {region_id}")
     
-    queues_str = ", ".join([f"{q['id']} ({q['alias']})" if q['id'] != q['alias'] else q['id'] for q in valid_queues])
+    queues_str = escape_markdown(", ".join([f"{q['id']} ({q['alias']})" if q['id'] != q['alias'] else q['id'] for q in valid_queues]))
     
     # Зберігаємо дані для фінального повідомлення
     await state.update_data(
@@ -534,35 +517,6 @@ async def handle_quiet_hours_settings(message: Message, state: FSMContext):
         await message.answer("Тихі години скинуті.")
         await show_quiet_hours_menu(message, state)
 
-def parse_time_interval(text: str):
-    """Парсить текст у два часових значення HH:MM."""
-    # Знаходимо всі цифри в рядку
-    nums = re.findall(r"(\d+)", text)
-    if not nums: return None
-    
-    if len(nums) == 2:
-        # Може бути 23 08 або 23-08
-        h1, h2 = int(nums[0]), int(nums[1])
-        if 0 <= h1 <= 23 and 0 <= h2 <= 23:
-            return f"{h1:02d}:00", f"{h2:02d}:00"
-    elif len(nums) == 4:
-        # Може бути 23 00 08 30
-        h1, m1, h2, m2 = map(int, nums)
-        if 0 <= h1 <= 23 and 0 <= m1 <= 59 and 0 <= h2 <= 23 and 0 <= m2 <= 59:
-            return f"{h1:02d}:{m1:02d}", f"{h2:02d}:{m2:02d}"
-    
-    # Спроба регуляркою для HH:MM HH:MM
-    matches = re.findall(r"(\d{1,2})[:\s-](\d{2})", text)
-    if len(matches) == 2:
-        try:
-            h1, m1 = map(int, matches[0])
-            h2, m2 = map(int, matches[1])
-            if 0 <= h1 <= 23 and 0 <= m1 <= 59 and 0 <= h2 <= 23 and 0 <= m2 <= 59:
-                return f"{h1:02d}:{m1:02d}", f"{h2:02d}:{m2:02d}"
-        except: pass
-            
-    return None
-
 @router.message(Registration.waiting_for_quiet_hours_time)
 async def handle_quiet_hours_time(message: Message, state: FSMContext):
     if message.text == "⬅️ Назад":
@@ -601,161 +555,8 @@ async def handle_quiet_hours_confirm(message: Message, state: FSMContext):
         await show_quiet_hours_menu(message, state)
 
 async def send_schedule(target: Any, tg_id: int, silent: bool = False):
-    """
-    Універсальна функція для відправки графіку.
-    Використовує ImageCache для classic/list режимів.
-    """
-    from services.image_generator import generate_schedule_image, convert_api_to_half_list, get_next_event_info, is_schedule_empty
-    from services.image_cache import ImageCache
-    from aiogram import Bot
-    from aiogram.types import Message
-    import hashlib
-    import json
-    from database.db import update_user_hash
-    
-    _LOGGER.info(f"Attempting to send schedule for user {tg_id} (silent={silent})")
-    user = await get_user(tg_id)
-    if not user:
-        _LOGGER.warning(f"User {tg_id} not found in database")
-        if isinstance(target, Message):
-            await target.answer("Ви ще не зареєстровані. Будь ласка, скористайтеся командою /start")
-        return
-    
-    # user: (tg_id, region_id, queue_id_json, hash, mode, rem_min, last_rem, last_upd, notif_en, qh_s, qh_e, qh_silent, last_status_rem, last_ann)
-    _, region_id, queue_id_json, _, mode, _, _, _, notif_enabled, qh_start, qh_end, qh_silent, _, _ = user
-    if not mode: mode = "classic"
-    
-    try:
-        queues = json.loads(queue_id_json)
-        if not isinstance(queues, list):
-            queues = [{"id": str(queue_id_json), "alias": str(queue_id_json)}]
-    except Exception as e:
-        queues = [{"id": queue_id_json, "alias": queue_id_json}]
-    
-    # Надсилаємо вступне повідомлення першим
-    if hasattr(target, "answer"):
-        from handlers.registration import get_main_keyboard
-        await target.answer("Ось ваш актуальний графік:", reply_markup=get_main_keyboard(), disable_notification=silent)
-    
-    all_schedules = {}
-    img_cache = ImageCache()
-    now_dt = datetime.now()
-    
-    for q in queues:
-        schedule_data = await api_client.fetch_schedule(region_id, q["id"])
-        if not schedule_data:
-            continue
-            
-        all_schedules[q["id"]] = schedule_data["schedule"]
-        sched_hash = hashlib.md5(json.dumps(schedule_data["schedule"], sort_keys=True).encode()).hexdigest()
-        
-        # Спробуємо взяти з кешу (тільки для classic та list)
-        cached_images = None
-        if mode in ["classic", "list"]:
-            cached_images = img_cache.get(region_id, q["id"], mode, sched_hash)
-            
-        if cached_images:
-            images_to_send = cached_images
-        else:
-            today_data = schedule_data["schedule"].get(schedule_data["date_today"], {})
-            tomorrow_data = schedule_data["schedule"].get(schedule_data["date_tomorrow"], {})
-            
-            today_half = convert_api_to_half_list(today_data)
-            tomorrow_half = convert_api_to_half_list(tomorrow_data)
-            
-            # В режимах classic/list приховуємо завтра зовсім, якщо там немає даних.
-            # В режимі dynamic нам потрібні всі дані для коректного накладання шарів.
-            if mode != "dynamic" and is_schedule_empty(tomorrow_half):
-                tomorrow_half_for_gen = []
-            else:
-                tomorrow_half_for_gen = tomorrow_half
-            
-            # Для dynamic завжди показуємо маркер часу. 
-            # Для інших - ні (вони кешуються без маркера).
-            show_marker = (mode == "dynamic")
-            
-            # Отримуємо назву регіону з REGIONS
-            from services.api_client import REGIONS
-            reg_name = REGIONS.get(region_id, "Unknown Region")
-            
-            # Отримуємо username бота
-            bot = target.bot if hasattr(target, "bot") else None
-            bot_username = None
-            if bot:
-                bot_info = await bot.get_me()
-                bot_username = bot_info.username
-            
-            images_to_send = generate_schedule_image(
-                today_half, tomorrow_half_for_gen, now_dt, mode, q["alias"], 
-                show_time_marker=show_marker,
-                region_name=reg_name,
-                bot_username=bot_username
-            )
-            
-            # Кешуємо, якщо це не dynamic
-            if mode in ["classic", "list"]:
-                img_cache.set(region_id, q["id"], mode, sched_hash, images_to_send)
-
-        # Формуємо текстовий прогноз
-        today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
-        tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
-        forecast_text = get_next_event_info(today_half, tomorrow_half, now_dt)
-        
-        # Додаємо повідомлення про відсутність графіку на завтра
-        if is_schedule_empty(tomorrow_half):
-            forecast_text += "\n\n⚠️ **Графіку на завтра ще немає.**"
-        
-        # Додаємо час запиту та статус сповіщень в підпис
-        timestamp_str = now_dt.strftime("%H:%M")
-        
-        notif_status_str = ""
-        if not notif_enabled:
-            notif_status_str = "\n⚠️ **Сповіщення вимкнені**"
-        elif qh_start and qh_end:
-            mode_desc = "без звуку" if qh_silent else "пропускаються"
-            notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end} ({mode_desc})**"
-
-        queue_media = []
-        for i, img_buf in enumerate(images_to_send):
-            photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{q['id']}_{i}.png")
-            # Додаємо підпис тільки до першого фото кожної черги
-            caption = f"📍 **{q['alias']}**\n{forecast_text}{notif_status_str}\n\n🕒 _Запитано о {timestamp_str}_" if i == 0 else None
-            queue_media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
-        
-        if not queue_media:
-            continue
-
-        # Надсилаємо розклад для цієї черги
-        if hasattr(target, "answer_photo"):
-            if len(queue_media) > 1:
-                await target.answer_media_group(queue_media, disable_notification=silent)
-            else:
-                await target.answer_photo(
-                    queue_media[0].media,
-                    caption=queue_media[0].caption,
-                    parse_mode="Markdown",
-                    disable_notification=silent
-                )
-        elif hasattr(target, "send_photo"):
-            if len(queue_media) > 1:
-                await target.send_media_group(tg_id, queue_media, disable_notification=silent)
-            else:
-                await target.send_photo(
-                    tg_id,
-                    queue_media[0].media,
-                    caption=queue_media[0].caption,
-                    parse_mode="Markdown",
-                    disable_notification=silent
-                )
-
-    # Оновлюємо хеш користувача
-    if all_schedules:
-        sched_str = json.dumps(all_schedules, sort_keys=True)
-        new_hash = hashlib.md5(sched_str.encode()).hexdigest()
-        await update_user_hash(tg_id, new_hash)
-    else:
-        if hasattr(target, "answer"):
-            await target.answer("Не вдалося отримати розклад для жодної з ваших черг.")
+    from services.schedule_sender import send_schedule as send
+    return await send(target, tg_id, silent, api_client)
 
 @router.message(F.text.contains("Поточний статус"))
 @router.message(Command("status"))

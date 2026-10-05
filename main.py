@@ -39,10 +39,10 @@ CHECK_INTERVAL = int(CHECK_INTERVAL_STR)
 CURRENT_ANNOUNCEMENT_ID = "features_update_2026_02"
 
 if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-    _LOGGER.error(f"BOT_TOKEN is invalid or missing! Value: {repr(BOT_TOKEN)}")
+    _LOGGER.error("BOT_TOKEN is invalid or missing")
     exit(1)
 
-_LOGGER.info(f"Bot token loaded (starts with: {str(BOT_TOKEN)[:5]}...)")
+_LOGGER.info("Bot token loaded")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -140,14 +140,30 @@ def is_change_relevant(old_sched: dict, new_sched: dict, mode: str, current_dt: 
     return False
 
 
+_update_lock = asyncio.Lock()
+
 async def check_updates():
+    if _update_lock.locked():
+        _LOGGER.info("Update check already running; skipping overlapping run")
+        return
+    async with _update_lock:
+        started = asyncio.get_running_loop().time()
+        try:
+            await _check_updates()
+        except Exception as exc:
+            _LOGGER.error("Update check failed (%s)", type(exc).__name__, exc_info=True)
+            raise
+        finally:
+            _LOGGER.info("Full update check took %.3fs", asyncio.get_running_loop().time() - started)
+
+async def _check_updates():
     """
     Періодична перевірка оновлень розкладу.
     Оптимізовано: спочатку перевіряємо змінені регіони, потім сповіщаємо користувачів.
     """
     from database.db import get_users_by_region, get_unique_queues_by_region
     from services.image_cache import ImageCache
-    from services.image_generator import generate_schedule_image, convert_api_to_half_list
+    from services.image_generator import generate_schedule_image_async, convert_api_to_half_list
     from services.api_client import REGIONS, API_REGION_MAP
     
     _LOGGER.info("Checking for updates...")
@@ -200,7 +216,7 @@ async def check_updates():
                 tomorrow_half_for_gen = [] if tomorrow_is_empty else tomorrow_half
                 
                 # Для кешу генеруємо БЕЗ часової відмітки
-                images = generate_schedule_image(
+                images = await generate_schedule_image_async(
                     today_half, tomorrow_half_for_gen, datetime.now(), mode, q_id, 
                     show_time_marker=False,
                     region_name=REGIONS.get(region_id),
@@ -322,7 +338,9 @@ async def check_updates():
                     _LOGGER.info(f"Notifying user {tg_id} about schedule change (is_relevant={is_relevant}, mode={mode}, silent={silent})")
                     try:
                         await bot.send_message(tg_id, "🔔 Розклад оновився!", disable_notification=silent)
-                        await send_schedule(bot, tg_id, silent=silent)
+                        delivered = await send_schedule(bot, tg_id, silent=silent)
+                        if not delivered:
+                            continue
                     except Exception as e:
                         err_msg = str(e)
                         if "Forbidden: bot was blocked by the user" in err_msg or "chat not found" in err_msg:
@@ -335,8 +353,9 @@ async def check_updates():
                         else:
                             _LOGGER.error(f"Failed to notify user {tg_id}: {e}")
                 
-                # Завжди оновлюємо хеш, навіть якщо це перший запуск
-                await update_user_hash(tg_id, new_hash)
+                # Save only baseline on first run or after successful delivery.
+                if last_hash is None:
+                    await update_user_hash(tg_id, new_hash)
 
 async def main():
     global api_client, session
@@ -390,16 +409,31 @@ async def main():
     # scheduler.add_job(broadcast_announcements, "cron", hour=12, minute=0)
     
     scheduler.start()
-    
-    # Негайна перевірка при старті
-    _LOGGER.info("Performing initial update check on startup...")
-    await check_updates()
-    
+    async def event_loop_watchdog():
+        previous = asyncio.get_running_loop().time()
+        while True:
+            await asyncio.sleep(1)
+            now = asyncio.get_running_loop().time()
+            delay = now - previous - 1
+            if delay > 2:
+                _LOGGER.warning("Event loop delay %.2fs", delay)
+            previous = now
+
+    watchdog = asyncio.create_task(event_loop_watchdog())
+    initial_check = asyncio.create_task(check_updates())
     _LOGGER.info("Starting bot polling...")
     try:
         await dp.start_polling(bot)
     finally:
+        initial_check.cancel()
+        watchdog.cancel()
+        scheduler.shutdown(wait=False)
+        await asyncio.gather(initial_check, watchdog, return_exceptions=True)
+        await api_client.stop_refresh()
         await session.close()
+        await bot.session.close()
+        from services.image_generator import _RENDERER
+        await asyncio.to_thread(_RENDERER.shutdown, True, cancel_futures=True)
 
 async def broadcast_announcements():
     from database.db import get_all_users, update_user_last_announcement
@@ -411,7 +445,7 @@ async def broadcast_announcements():
         # user: (tg_id, region_id, queue_id_json, hash, mode, rem, last_rem, last_upd, notif_en, qh_s, qh_e, last_status_rem, last_ann)
         tg_id = user[0]
         mode = user[4]
-        last_ann_id = user[12] if len(user) > 12 else None
+        last_ann_id = get_last_announcement_id(user)
         
         # Надсилаємо всім користувачам, хто ще не бачив це сповіщення
         if last_ann_id != CURRENT_ANNOUNCEMENT_ID:
@@ -434,6 +468,9 @@ async def broadcast_announcements():
     
     if count > 0:
         _LOGGER.info(f"Sent {count} announcements.")
+
+def get_last_announcement_id(user):
+    return user[13] if len(user) > 13 else None
 
 @dp.callback_query(F.data == "enable_notifs")
 async def process_enable_notifs(callback: CallbackQuery):

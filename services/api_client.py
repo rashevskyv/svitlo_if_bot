@@ -1,4 +1,5 @@
 import aiohttp
+import asyncio
 import json
 import logging
 import sys
@@ -89,22 +90,33 @@ class SvitloApiClient:
             _instance._initialized = False
         return _instance
 
-    def __init__(self, session: Optional[aiohttp.ClientSession] = None, cache_ttl: int = 60):
+    def __init__(self, session: Optional[aiohttp.ClientSession] = None, cache_ttl: Optional[int] = None):
         if self._initialized:
-            if session: self._session = session
+            if session is not None: self._session = session
+            if cache_ttl is not None: self._cache_ttl = cache_ttl
             return
         self._session = session
         self._cached_data = None
         self._old_cached_data = None
         self._last_fetch_time = 0
-        self._cache_ttl = cache_ttl # seconds
+        self._cache_ttl = cache_ttl if cache_ttl is not None else 60
+        self._refresh_task = None
+        self._last_refresh_completed = 0.0
         self._etag = None
         self._region_hashes = {} # region_cpu -> hash
         self._pending_changes = set() # region_cpu
+        self._unavailable = set()
         self._if_api_blocked = False
         self._initialized = True
 
     async def fetch_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
+        started = time.perf_counter()
+        try:
+            return await self._fetch_schedule(region, queue)
+        finally:
+            _LOGGER.debug("Schedule data lookup %r/%r took %.3fs", region, queue, time.perf_counter() - started)
+
+    async def _fetch_schedule(self, region: str, queue: str) -> Optional[dict[str, Any]]:
         """
         Отримує розклад для вказаної черги. Використовує кеш, якщо він актуальний.
         """
@@ -115,7 +127,7 @@ class SvitloApiClient:
         
         # Якщо кеш застарів АБО змінився день, пробуємо оновити
         if not self._cached_data or (now - self._last_fetch_time) > self._cache_ttl or day_changed:
-            await self._refresh_cache()
+            await self._refresh_cache(force=bool(day_changed))
             
         if not self._cached_data:
             return None
@@ -125,7 +137,10 @@ class SvitloApiClient:
         region_obj = next((r for r in regions_list if r.get("cpu") == api_region_key), None)
         
         if not region_obj:
-            _LOGGER.error(f"Region '{api_region_key}' not found in API")
+            key = (region, queue)
+            if key not in self._unavailable:
+                _LOGGER.error("Schedule unavailable for region %r, queue %r; ask user to reconfigure", region, queue)
+                self._unavailable.add(key)
             return None
         
         date_today = self._cached_data.get("date_today")
@@ -133,8 +148,12 @@ class SvitloApiClient:
         
         schedule = (region_obj.get("schedule") or {}).get(queue) or {}
         if not schedule:
-            _LOGGER.warning(f"No schedule found for queue {queue} in region {region}")
+            key = (region, queue)
+            if key not in self._unavailable:
+                _LOGGER.warning("Schedule unavailable for region %r, queue %r; ask user to reconfigure", region, queue)
+                self._unavailable.add(key)
             return None
+        self._unavailable.discard((region, queue))
         
         return {
             "region": region,
@@ -202,6 +221,13 @@ class SvitloApiClient:
         """
         parsed = {}
         for day_data in raw_data:
+            if not isinstance(day_data, dict):
+                continue
+            queues = day_data.get("queues")
+            if not isinstance(queues, dict) or queue not in queues:
+                continue
+            if not isinstance(queues[queue], list):
+                continue
             date_str = day_data.get("eventDate") # "28.01.2026"
             if not date_str: continue
             
@@ -219,7 +245,7 @@ class SvitloApiClient:
                 day_schedule[f"{h:02d}:30"] = 1
             
             # Заповнюємо відключення
-            intervals = day_data.get("queues", {}).get(queue, [])
+            intervals = queues[queue]
             for interval in intervals:
                 # interval: {"from": "06:00", "to": "10:30", "status": 1}
                 # status 1 зазвичай означає відключення на цьому сайті
@@ -251,7 +277,45 @@ class SvitloApiClient:
             parsed[iso_date] = day_schedule
         return parsed
 
-    async def _refresh_cache(self) -> list[str]:
+    async def _refresh_cache(self, force: bool = False) -> list[str]:
+        started = time.perf_counter()
+        last_fetch_dt = datetime.fromtimestamp(self._last_fetch_time) if self._last_fetch_time else None
+        day_changed = last_fetch_dt and last_fetch_dt.date() != datetime.now().date()
+        if not force and not day_changed and self._cached_data and time.time() - self._last_fetch_time <= self._cache_ttl:
+            return []
+        task = self._refresh_task
+        if task is None or task.done():
+            if time.monotonic() - self._last_refresh_completed < 15:
+                return []
+            task = asyncio.create_task(self._refresh_cache_with_timeout())
+            self._refresh_task = task
+            task.add_done_callback(self._mark_refresh_completed)
+        try:
+            return await asyncio.shield(task)
+        finally:
+            _LOGGER.info("Cache refresh wait and work %.3fs", time.perf_counter() - started)
+
+    async def _refresh_cache_with_timeout(self):
+        try:
+            return await asyncio.wait_for(self._refresh_cache_locked(), timeout=45)
+        except asyncio.TimeoutError:
+            _LOGGER.error("Cache refresh timed out")
+            return []
+
+    def _mark_refresh_completed(self, task):
+        self._last_refresh_completed = time.monotonic()
+        if self._refresh_task is task:
+            self._refresh_task = None
+        if not task.cancelled():
+            task.exception()
+
+    async def stop_refresh(self):
+        task = self._refresh_task
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    async def _refresh_cache_locked(self) -> list[str]:
         """
         Завантажує повний JSON з API та оновлює кеш.
         Також довантажує актуальні дані для Івано-Франківська.
@@ -274,9 +338,10 @@ class SvitloApiClient:
                 day_changed = True
 
         # Зберігаємо попередній стан перед оновленням
-        if self._cached_data:
-            import copy
-            self._old_cached_data = copy.deepcopy(self._cached_data)
+        import copy
+        prior_data = copy.deepcopy(self._cached_data)
+        candidate = copy.deepcopy(prior_data)
+        candidate_etag = self._etag
             
         try:
             # 1. Отримуємо основні дані
@@ -286,30 +351,36 @@ class SvitloApiClient:
 
             async with self._session.get(url_with_cache_bust, headers=headers, timeout=30) as resp:
                 if resp.status == 200:
-                    self._etag = resp.headers.get("ETag")
+                    candidate_etag = resp.headers.get("ETag")
                     raw_response = await resp.json(content_type=None)
                     body_str = raw_response.get("body")
-                    if body_str:
-                        new_data = json.loads(body_str)
-                        self._merge_with_old_data(new_data)
-                        self._cached_data = new_data
-                        self._sync_cache_dates()
+                    if not body_str:
+                        raise ValueError("Global API response has no body")
+                    new_data = json.loads(body_str)
+                    if not isinstance(new_data, dict) or not isinstance(new_data.get("regions"), list):
+                        raise ValueError("Global API response has invalid regions")
+                    self._merge_with_old_data(new_data)
+                    candidate = copy.deepcopy(new_data)
+                    self._sync_cache_dates(candidate)
                 elif resp.status == 304:
                     _LOGGER.info("Global API returned 304.")
-                    self._sync_cache_dates()
+                    if not candidate:
+                        return []
+                    self._sync_cache_dates(candidate)
                 else:
                     _LOGGER.error(f"Global API error {resp.status}")
-                    self._sync_cache_dates()
+                    return []
 
-            if not self._cached_data:
+            if not candidate:
                 return []
 
             # 2. Окремо оновлюємо Івано-Франківськ
             if IF_REGION_ID in REGIONS:
-                await self._update_if_region_data()
+                await self._update_if_region_data(candidate)
 
             # 3. Визначаємо змінені регіони
-            for r in self._cached_data.get("regions", []):
+            new_hashes = {}
+            for r in candidate.get("regions", []):
                 cpu = r.get("cpu")
                 r_content = json.dumps({
                     "schedule": r.get("schedule"),
@@ -319,14 +390,25 @@ class SvitloApiClient:
                 
                 if self._region_hashes.get(cpu) != r_hash:
                     changed_regions.append(cpu)
-                    self._region_hashes[cpu] = r_hash
-                    self._pending_changes.add(cpu)
+                new_hashes[cpu] = r_hash
+
+            self._cached_data = candidate
+            self._etag = candidate_etag
+            self._region_hashes = new_hashes
+            self._pending_changes.update(changed_regions)
             
             self._last_fetch_time = time.time()
+            if candidate != prior_data:
+                self._old_cached_data = prior_data
             _LOGGER.info(f"Cache refreshed. Changed regions: {len(changed_regions)}")
 
+        except asyncio.CancelledError:
+            self._cached_data = prior_data
+            raise
         except Exception as e:
-            _LOGGER.error(f"Error refreshing cache: {e}")
+            self._cached_data = prior_data
+            _LOGGER.error(f"Error refreshing cache ({type(e).__name__}): {e}")
+            return []
         finally:
             if close_session:
                 await self._session.close()
@@ -336,10 +418,9 @@ class SvitloApiClient:
         # навіть якщо їхній вміст не змінився (щоб обробити "сліпі зони" після 00:00)
         if day_changed:
             _LOGGER.info("Day changed, marking all regions as pending changes for update check")
-            active_regions = await self.get_active_regions()
-            for reg_id in active_regions:
-                cpu = API_REGION_MAP.get(reg_id, reg_id)
-                self._pending_changes.add(cpu)
+            for region in candidate.get("regions", []):
+                if region.get("schedule"):
+                    self._pending_changes.add(region.get("cpu"))
 
         return changed_regions
 
@@ -365,124 +446,9 @@ class SvitloApiClient:
             _LOGGER.error(f"Failed to fetch IF queues: {e}")
             return []
 
-    async def _update_if_region_data(self):
-        """Оновлює дані для регіону ІФ безпосередньо з їхнього сайту."""
-        api_region_key = API_REGION_MAP.get(IF_REGION_ID, IF_REGION_ID)
-        regions_list = self._cached_data.get("regions", [])
-        region_obj = next((r for r in regions_list if r.get("cpu") == api_region_key), None)
-        
-        if not region_obj: return
-
-        # 0. Спробуємо завантажити локальний кеш, якщо він є
-        local_data = None
-        data_path = os.path.join(REPO_ROOT, "data", "if_schedules.json")
-        if os.path.exists(data_path):
-            try:
-                with open(data_path, "r", encoding="utf-8") as f:
-                    local_data = json.load(f)
-                _LOGGER.info(f"Loaded IF data from local sync file: {data_path}")
-            except Exception as e:
-                _LOGGER.error(f"Failed to load local IF data: {e}")
-
-        # 0.1 Спробуємо завантажити з Gist, якщо є конфігурація
-        gist_id = os.getenv("GIST_ID")
-        if not local_data and gist_id and self._session:
-            try:
-                # Використовуємо пряме посилання на raw файл для швидкості
-                # Для цього нам потрібен нікнейм, але ми можемо отримати його через API 
-                # або просто спробувати URL rashevskyv (власник репозиторію)
-                gist_raw_url = f"https://gist.githubusercontent.com/rashevskyv/{gist_id}/raw/if_schedules.json"
-                async with self._session.get(gist_raw_url, timeout=10) as resp:
-                    if resp.status == 200:
-                        local_data = await resp.json(content_type=None)
-                        _LOGGER.info(f"Loaded IF data from GitHub Gist: {gist_id}")
-                    else:
-                        _LOGGER.warning(f"Failed to fetch Gist {gist_id}: {resp.status}")
-            except Exception as e:
-                _LOGGER.error(f"Error fetching IF data from Gist: {e}")
-
-        # 1. Отримуємо список черг з сайту
-        if self._if_api_blocked:
-            _LOGGER.info("IF API is marked as blocked, skipping direct update. Using data from global proxy.")
-            queues = []
-        else:
-            queues = await self._fetch_if_queues()
-        
-        # 2. Якщо не вдалося (або заблоковано), використовуємо ті черги, що є в об'єкті регіону
-        if not queues:
-            queues = list(region_obj.get("schedule", {}).keys())
-            
-        # 3. Якщо і в об'єкті пусто, використовуємо хардкод (fallback)
-        if not queues:
-            _LOGGER.warning("No queues found for IF, using fallback list")
-            queues = [f"{g}.{s}" for g in range(1, 7) for s in range(1, 3)] # 1.1 ... 6.2
-
-        new_if_schedules = {}
-        if self._if_api_blocked:
-            _LOGGER.info(f"IF schedules for {len(queues)} queues will be taken from global proxy or local sync (geo-blocked direct access).")
-        else:
-            _LOGGER.info(f"Updating IF schedules for {len(queues)} queues: {queues}")
-            # ... direct update logic ...
-            for q in queues:
-                raw_if = await self._fetch_if_schedule(q)
-                if self._if_api_blocked:
-                    _LOGGER.warning("IF API became blocked during batch update, stopping.")
-                    break
-                if raw_if:
-                    parsed_if = self._parse_if_schedule(raw_if, q)
-                    if parsed_if:
-                        new_if_schedules[q] = parsed_if
-        
-        # 4. Якщо пряме оновлення не дало результатів (або заблоковано), використовуємо локальні дані
-        if local_data and "schedules" in local_data:
-            # Перевірка свіжості даних (10 хвилин)
-            is_fresh = True
-            updated_at_str = local_data.get("updated_at")
-            if updated_at_str:
-                try:
-                    updated_at = datetime.fromisoformat(updated_at_str)
-                    # Якщо в стрінзі немає таймзони, вважаємо що це UTC (новий формат)
-                    if updated_at.tzinfo is None:
-                        updated_at = updated_at.replace(tzinfo=timezone.utc)
-                    
-                    age = datetime.now(timezone.utc) - updated_at
-                    if age > timedelta(minutes=10):
-                        _LOGGER.warning(f"IF local/gist data is stale ({age.total_seconds()/60:.1f} min old). Using global proxy instead.")
-                        is_fresh = False
-                except Exception as e:
-                    _LOGGER.error(f"Error checking data freshness: {e}")
-                    is_fresh = False
-            
-            if is_fresh:
-                for q_id, q_sched in local_data["schedules"].items():
-                    if q_id not in new_if_schedules:
-                        new_if_schedules[q_id] = q_sched
-        
-        if new_if_schedules:
-            # Оновлюємо розклад у об'єкті регіону
-            # Ми об'єднуємо нові дані з існуючими, щоб не втратити графік за попередній день
-            # відразу після опівночі, якщо він ще потрібен.
-            if "schedule" not in region_obj:
-                region_obj["schedule"] = {}
-            
-            for q_id, q_sched in new_if_schedules.items():
-                if q_id not in region_obj["schedule"]:
-                    region_obj["schedule"][q_id] = {}
-                
-                # Розумне об'єднання для ІФ: не затираємо відоме невідомим
-                old_q_sched = region_obj["schedule"][q_id]
-                for date_str, day_grid in q_sched.items():
-                    if date_str not in old_q_sched:
-                        old_q_sched[date_str] = day_grid
-                    else:
-                        # Порівнюємо по слотах
-                        for slot, status in day_grid.items():
-                            # Якщо новий статус "unknown" (0), а старий був відомий — залишаємо старий
-                            if status == 0 and old_q_sched[date_str].get(slot, 0) != 0:
-                                continue
-                            old_q_sched[date_str][slot] = status
-                
-            _LOGGER.info(f"Successfully updated IF schedules (source: direct={not self._if_api_blocked}, local={local_data is not None})")
+    async def _update_if_region_data(self, cache_data=None):
+        from services.if_source import update_if_region_data
+        await update_if_region_data(self, cache_data)
 
     def get_changed_regions(self, reset: bool = True) -> list[str]:
         """
@@ -545,19 +511,18 @@ class SvitloApiClient:
         if code == 3: return "possible"
         return "unknown"
 
-    def _sync_cache_dates(self):
+    def _sync_cache_dates(self, cache_data=None):
         """Забезпечує відповідність date_today та date_tomorrow системному часу."""
-        if not self._cached_data: return
+        cache_data = cache_data if cache_data is not None else self._cached_data
+        if not cache_data: return
         
         from datetime import timedelta
         now_date = datetime.now().date()
         iso_today = now_date.isoformat()
         iso_tomorrow = (now_date + timedelta(days=1)).isoformat()
         
-        if self._cached_data.get("date_today") != iso_today:
-            _LOGGER.info(f"Syncing cache dates: {self._cached_data.get('date_today')} -> {iso_today}")
-            self._cached_data["date_today"] = iso_today
-            self._cached_data["date_tomorrow"] = iso_tomorrow
+        cache_data["date_today"] = iso_today
+        cache_data["date_tomorrow"] = iso_tomorrow
 
     def _merge_with_old_data(self, new_data: dict):
         """Об'єднує нові дані з кешу з попередніми, запобігаючи втраті відомих статусів."""

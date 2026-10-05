@@ -4,6 +4,38 @@ import numpy as np
 from io import BytesIO
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
+import asyncio
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+_RENDERER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="schedule-image")
+_LOGGER = logging.getLogger(__name__)
+
+def _render_timed(args, kwargs):
+    started = time.perf_counter()
+    try:
+        return generate_schedule_image(*args, **kwargs)
+    finally:
+        plt.close("all")
+        _LOGGER.info("Image generation %.3fs", time.perf_counter() - started)
+
+def _consume_render_result(future):
+    if not future.cancelled():
+        future.exception()
+
+async def generate_schedule_image_async(*args, **kwargs):
+    """Render Matplotlib images serially outside the asyncio event loop."""
+    loop = asyncio.get_running_loop()
+    started = time.perf_counter()
+    future = loop.run_in_executor(_RENDERER, lambda: _render_timed(args, kwargs))
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        future.add_done_callback(_consume_render_result)
+        raise
+    finally:
+        _LOGGER.info("Image renderer wait %.3fs", time.perf_counter() - started)
 
 # Кольори для графіків
 COLOR_ON = "#4CAF50"      # Green
@@ -23,6 +55,14 @@ def generate_schedule_image(
     region_name: Optional[str] = None,
     bot_username: Optional[str] = None
 ) -> List[BytesIO]:
+    try:
+        return _generate_schedule_images(today_half, tomorrow_half, current_dt, mode, queue_id,
+                                        show_time_marker, region_name, bot_username)
+    finally:
+        plt.close("all")
+
+def _generate_schedule_images(today_half, tomorrow_half, current_dt, mode, queue_id,
+                              show_time_marker, region_name, bot_username):
     """
     Головна функція генерації зображень залежно від режиму.
     Повертає список буферів (сьогодні, завтра).
@@ -95,14 +135,21 @@ def _generate_circle_view(
                 status = get_status_at_min(day_data, m)
             display_colors.append(color_map.get(status, COLOR_UNKNOWN))
 
-        # Малюємо основне кільце (1440 тонких сегментів)
-        sizes = [1] * 1440
-        ax.pie(sizes, colors=display_colors, startangle=90, counterclock=False, 
+        # Coalesce adjacent minutes with the same status; retain minute boundaries.
+        sizes, colors = [], []
+        for color in display_colors:
+            if colors and colors[-1] == color:
+                sizes[-1] += 1
+            else:
+                sizes.append(1)
+                colors.append(color)
+        ax.pie(sizes, colors=colors, startangle=90, counterclock=False,
                wedgeprops=dict(width=0.4, edgecolor='none', linewidth=0))
         
         # ЛОГІКА НАКЛАДАННЯ (ДРУГИЙ ШАР ПІСЛЯ СТРІЛКИ)
         # Показуємо ЗАВТРАШНІЙ вечір поверх сьогоднішнього, якщо він відрізняється
         if tomorrow_data and len(tomorrow_data) == 48:
+            overlays = []
             for m in range(current_minute, 1440):
                 t_status = get_status_at_min(tomorrow_data, m)
                 d_status = get_status_at_min(day_data, m)
@@ -111,20 +158,21 @@ def _generate_circle_view(
                 if t_status != d_status and t_status != "unknown":
                     # Малюємо лише відключення або потенційні відключення зовні
                     if t_status in ["off", "possible"]:
-                        angle_start = 90 - (m * (360/1440))
-                        angle_end = 90 - ((m + 1) * (360/1440))
                         color = color_map.get(t_status, COLOR_UNKNOWN)
-                        p = patches.Wedge((0, 0), 1.08, angle_end, angle_start, width=0.06, 
-                                          color=color, alpha=1.0, zorder=10)
-                        ax.add_patch(p)
+                        overlays.append((m, color))
                     # Якщо завтра БУДЕ світло, а сьогодні НЕМАЄ - можна теж показати (зеленим)
                     elif t_status == "on" and d_status in ["off", "possible"]:
-                        angle_start = 90 - (m * (360/1440))
-                        angle_end = 90 - ((m + 1) * (360/1440))
                         color = color_map.get("on", COLOR_ON)
-                        p = patches.Wedge((0, 0), 1.08, angle_end, angle_start, width=0.06, 
-                                          color=color, alpha=1.0, zorder=10)
-                        ax.add_patch(p)
+                        overlays.append((m, color))
+            if overlays:
+                start, prev, color = overlays[0][0], overlays[0][0], overlays[0][1]
+                for minute, next_color in overlays[1:] + [(1440, None)]:
+                    if minute != prev + 1 or next_color != color:
+                        angle_start = 90 - start * (360 / 1440)
+                        angle_end = 90 - (prev + 1) * (360 / 1440)
+                        ax.add_patch(patches.Wedge((0, 0), 1.08, angle_end, angle_start, width=0.06, color=color, zorder=10))
+                        start, color = minute, next_color
+                    prev = minute
     else:
         # Класичний режим (48 сегментів)
         sizes = [1] * 48
@@ -188,9 +236,11 @@ def _generate_circle_view(
                  bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=1))
 
     buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=120)
-    buf.seek(0)
-    plt.close(fig)
+    try:
+        fig.savefig(buf, format='png', dpi=120)
+        buf.seek(0)
+    finally:
+        plt.close(fig)
     return buf
 
 def _generate_list_view(
@@ -208,9 +258,9 @@ def _generate_list_view(
     intervals = []
     start_time = None
     for i, status in enumerate(half_list):
-        if status == "off" and start_time is None:
+        if status in ("off", "possible") and start_time is None:
             start_time = i
-        elif status != "off" and start_time is not None:
+        elif status not in ("off", "possible") and start_time is not None:
             intervals.append((start_time, i))
             start_time = None
     if start_time is not None:
@@ -233,9 +283,18 @@ def _generate_list_view(
     y_pos = 0.65 # Починаємо нижче, щоб не наповзало на заголовок
     
     if not intervals:
-        plt.text(0.5, 0.45, f"{current_dt.strftime('%d.%m.%Y')}\nВідключень не заплановано", 
-                 ha='center', va='center', fontsize=16, color='green', fontweight='bold', transform=ax.transAxes)
+        known = any(status in ("on", "off", "possible") for status in half_list)
+        text = "Можливих відключень не знайдено" if known else "Дані графіка відсутні"
+        if known and "unknown" in half_list:
+            text += "\nДані часткові"
+        color = "green" if known and "unknown" not in half_list else "#757575"
+        plt.text(0.5, 0.45, f"{current_dt.strftime('%d.%m.%Y')}\n{text}",
+                 ha='center', va='center', fontsize=16, color=color, fontweight='bold', transform=ax.transAxes)
     else:
+        if "possible" in half_list:
+            plt.text(0.5, 0.76, "Можливі інтервали", ha='center', va='center', fontsize=11, color='#555555', transform=ax.transAxes)
+        if "unknown" in half_list:
+            plt.text(0.5, 0.72, "Дані часткові", ha='center', va='center', fontsize=10, color='#757575', transform=ax.transAxes)
         # Дата (вище першого інтервалу)
         plt.text(0.05, y_pos + 0.12, f"{current_dt.strftime('%d.%m.%Y')}", fontsize=14, fontweight='bold', color='#333333', transform=ax.transAxes)
         
@@ -285,9 +344,11 @@ def _generate_list_view(
                  bbox=dict(facecolor='white', alpha=0.5, edgecolor='none', pad=1))
 
     buf = BytesIO()
-    plt.savefig(buf, format='png', dpi=120)
-    buf.seek(0)
-    plt.close(fig)
+    try:
+        fig.savefig(buf, format='png', dpi=120)
+        buf.seek(0)
+    finally:
+        plt.close(fig)
     return buf
 
 def convert_api_to_half_list(day_schedule: dict) -> List[str]:
@@ -356,12 +417,16 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
     current_status = today_half[current_idx] if current_idx < 48 else "unknown"
     
     for i in range(current_idx + 1, len(combined)):
-        if combined[i] != current_status and combined[i] != "unknown":
+        if combined[i] != current_status and combined[i] != "unknown" and not (
+            combined[i] == "on" and (i == 0 or combined[i - 1] not in ("off", "possible"))
+        ):
             next_event_idx = i
             break
             
     if next_event_idx == -1:
-        if current_status == "off":
+        if "unknown" in combined[current_idx:]:
+            forecast = "⚠️ Даних про наступні зміни графіка поки немає."
+        elif current_status == "off":
             forecast = "⚡️ Змін у графіку поки не заплановано."
         else:
             # Перевіряємо чи були відключення сьогодні взагалі
@@ -370,6 +435,8 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
             else:
                 forecast = "⚡️ Відключень на сьогодні не заплановано."
     else:
+        if "unknown" in combined[current_idx:next_event_idx]:
+            forecast = "⚠️ Дані неповні. Наступна відома зміна графіка:"
         event_time = datetime.combine(current_dt.date(), datetime.min.time()) + timedelta(minutes=next_event_idx * 30)
         diff = event_time - current_dt
         diff_h, diff_m = divmod(int(diff.total_seconds() // 60), 60)
@@ -396,13 +463,17 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
         dur_h, dur_m = divmod(duration_idx * 30, 60)
         dur_str = f"{dur_h}г" + (f" {dur_m}хв" if dur_m else "")
         
-        forecast = f"🕒 Наступне **{action}**: о **{time_str}**\n⏳ Залишилось: **{diff_h}г {diff_m}хв**\n📏 Тривалість: **{dur_str}**"
+        detail = f"🕒 Наступне **{action}**: о **{time_str}**\n⏳ Залишилось: **{diff_h}г {diff_m}хв**\n📏 Тривалість: **{dur_str}**"
+        forecast = f"{forecast}\n{detail}" if "unknown" in combined[current_idx:next_event_idx] else detail
 
     res = f"{forecast}\n\n"
     
     # Списки інтервалів
     if today_intervals:
-        res += f"🔴 **Відключення сьогодні:**\n{', '.join(today_intervals)}\n"
+        heading = "Відключення та можливі відключення" if "possible" in today_half else "Відключення"
+        res += f"🔴 **{heading} сьогодні:**\n{', '.join(today_intervals)}\n"
+    elif "unknown" in today_half:
+        res += "⚠️ **Дані графіка на сьогодні неповні**\n"
     else:
         res += "🟢 **Сьогодні без відключень**\n"
         
@@ -410,14 +481,22 @@ def get_next_event_info(today_half: List[str], tomorrow_half: List[str], current
         if not is_schedule_empty(tomorrow_half):
             tomorrow_intervals = get_intervals(tomorrow_half)
             if tomorrow_intervals:
-                res += f"🔴 **Відключення завтра:**\n{', '.join(tomorrow_intervals)}\n"
+                heading = "Відключення та можливі відключення" if "possible" in tomorrow_half else "Відключення"
+                res += f"🔴 **{heading} завтра:**\n{', '.join(tomorrow_intervals)}\n"
             else:
-                res += "🟢 **Завтра без відключень**\n"
+                if "unknown" in tomorrow_half:
+                    res += "⚠️ **Дані графіка на завтра неповні**\n"
+                else:
+                    res += "🟢 **Завтра без відключень**\n"
 
     res += f"\n📊 **Статистика відключень:**\n• Сьогодні: **{today_stats}**"
+    if "unknown" in today_half and today_intervals:
+        res += "\n⚠️ Дані на сьогодні часткові."
     
     if tomorrow_half and len(tomorrow_half) == 48 and not is_schedule_empty(tomorrow_half):
         tomorrow_stats = calc_stats(tomorrow_half)
         res += f"\n• Завтра: **{tomorrow_stats}**"
+        if "unknown" in tomorrow_half and tomorrow_intervals:
+            res += "\n⚠️ Дані на завтра часткові."
         
     return res

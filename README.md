@@ -49,6 +49,8 @@ The core logic and HA integration are located in the [svitlo_live](https://githu
 - ... and many others via unified API.
 
 ## 💡 Author
+Latency audit, regression checks, and diagnostic commands: [2026-10-05 report (Ukrainian)](docs/audit-2026-10-05.md).
+
 - GitHub: [@chaichuk](https://github.com/chaichuk)
 - Telegram: [@serhii_chaichuk](https://t.me/serhii_chaichuk)
 

@@ -14,3 +14,5 @@ database/*.db
 test_*.py
 verify*.py
 check_*.py
+!tests/
+!tests/*.py

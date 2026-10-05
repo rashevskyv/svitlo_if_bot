@@ -6,7 +6,7 @@ from aiogram import Bot
 from database.db import get_all_users, update_user_last_reminder
 from services.api_client import SvitloApiClient
 from services.image_generator import convert_api_to_half_list
-from services.utils import is_now_quiet_hours
+from services.utils import is_now_quiet_hours, escape_markdown
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,24 +71,24 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
                         off_date = now.date() if i < 48 else now.date() + timedelta(days=1)
                         off_time = datetime.combine(off_date, datetime.min.time()) + timedelta(hours=off_hour, minutes=off_min)
                         
-                        if off_time not in upcoming_events:
-                            upcoming_events[off_time] = {'off': [], 'on': []}
-                        upcoming_events[off_time]['off'].append(q["alias"])
-                        found_off = True
+                        if off_time > now:
+                            upcoming_events.setdefault(off_time, {'off': [], 'on': []})
+                            upcoming_events[off_time]['off'].append(q["alias"])
+                            found_off = True
                 
                 # Включення (restore)
-                if not found_on and all_half[i] in ["on", "unknown"]:
-                    # Включення — це перехід від off/possible до on/unknown
+                if not found_on and all_half[i] == "on":
+                    # Unknown means missing data, not a confirmed restoration.
                     if i > 0 and all_half[i-1] in ["off", "possible"]:
                         on_hour = (i % 48) // 2
                         on_min = (i % 2) * 30
                         on_date = now.date() if i < 48 else now.date() + timedelta(days=1)
                         on_time = datetime.combine(on_date, datetime.min.time()) + timedelta(hours=on_hour, minutes=on_min)
                         
-                        if on_time not in upcoming_events:
-                            upcoming_events[on_time] = {'off': [], 'on': []}
-                        upcoming_events[on_time]['on'].append(q["alias"])
-                        found_on = True
+                        if on_time > now:
+                            upcoming_events.setdefault(on_time, {'off': [], 'on': []})
+                            upcoming_events[on_time]['on'].append(q["alias"])
+                            found_on = True
                 
                 if found_off and found_on:
                     break
@@ -116,12 +116,12 @@ async def check_reminders(bot: Bot, api_client: SvitloApiClient):
                 
                 lines = []
                 if events_at_time['off']:
-                    aliases = ", ".join([f"**{a}**" for a in events_at_time['off']])
+                    aliases = ", ".join([f"**{escape_markdown(a)}**" for a in events_at_time['off']])
                     word = "чергою" if len(events_at_time['off']) == 1 else "чергами"
                     lines.append(f"🔴 очікується **відключення** світла за {word} {aliases}")
                 
                 if events_at_time['on']:
-                    aliases = ", ".join([f"**{a}**" for a in events_at_time['on']])
+                    aliases = ", ".join([f"**{escape_markdown(a)}**" for a in events_at_time['on']])
                     word = "чергою" if len(events_at_time['on']) == 1 else "чергами"
                     lines.append(f"🟢 очікується **включення** світла за {word} {aliases}")
                 

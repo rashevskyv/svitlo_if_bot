@@ -1,8 +1,12 @@
 import logging
+import re
 from datetime import datetime
 from typing import Optional
 
 _LOGGER = logging.getLogger(__name__)
+
+def escape_markdown(value) -> str:
+    return re.sub(r"([\\_*`\[\]])", r"\\\1", str(value))
 
 def is_now_quiet_hours(start_str: Optional[str], end_str: Optional[str], current_dt: datetime) -> bool:
     """
