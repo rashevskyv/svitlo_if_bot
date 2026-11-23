@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 import zlib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from importlib.util import find_spec
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +24,14 @@ T = 1795384800  # any midnight epoch; the JS functions only use offsets from it
 
 def n(h, m=0, s=0, ms=0):
     return T * 1000 + ((h * 60 + m) * 60 + s) * 1000 + ms
+
+
+def utc(*a):
+    return int(datetime(*a, tzinfo=timezone.utc).timestamp() * 1000)
+
+
+SPRING = utc(2026, 3, 28, 22) // 1000  # Kyiv midnight of 2026-03-29
+FALL = utc(2026, 10, 24, 21) // 1000  # Kyiv midnight of 2026-10-25
 
 
 def run_js(exprs):
@@ -119,6 +127,17 @@ class JsTests(unittest.TestCase):
             ("parseData('{\"r\":5,\"t\":1,\"s\":\"1\"}',6)", None),
             ("parseData('{\"r\":5,\"t\":1,\"s\":\"1\"}',5).s", "1"),
             ("parseData('{\"t\":1,\"s\":\"1\"}',0).t", 1),
+            # DST: 2026-03-29 (23 h day) and 2026-10-25 (25 h day). Slots follow the Kyiv wall clock.
+            (f"kyivOffset({utc(2026, 3, 29, 0, 59)})/36e5", 2), (f"kyivOffset({utc(2026, 3, 29, 1)})/36e5", 3),
+            (f"kyivOffset({utc(2026, 10, 25, 0, 59)})/36e5", 3), (f"kyivOffset({utc(2026, 10, 25, 1)})/36e5", 2),
+            (f"slotIndex({utc(2026, 3, 29, 9)},{SPRING},48)", 24),  # 12:00 wall
+            (f"slotIndex({utc(2026, 10, 25, 10)},{FALL},48)", 24),  # 12:00 wall
+            (f"slotIndex({utc(2026, 3, 29, 20, 59)},{SPRING},48)", 47),  # 23:59 wall
+            (f"slotIndex({utc(2026, 10, 25, 21, 59)},{FALL},48)", 47),  # 23:59 wall, not stale an hour early
+            (f"isStale({utc(2026, 10, 25, 21, 59)},{FALL},48)", False),
+            (f"isStale({utc(2026, 3, 29, 21)},{SPRING},48)", True),  # next midnight
+            (f"timeLeftMs({utc(2026, 3, 28, 23)},{SPRING},8)/36e5", 2),  # 01:00 -> 04:00 wall is 2 real hours
+            (f"timeLeftMs({utc(2026, 10, 24, 22)},{FALL},8)/36e5", 4),  # 01:00 -> 04:00 wall is 4 real hours
             # "Коло (Прогноз)": before the hand = tomorrow, after = today; hand splits its slot (21:45 = 1305).
             (f"faceArcs('{'1' * 48 + '2' * 48}',1305)", [[0, 1305, "2"], [1305, 1440, "1"]]),
             (f"faceArcs('{'1' * 48}',1305)", [[0, 1305, "0"], [1305, 1440, "1"]]),

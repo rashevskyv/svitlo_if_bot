@@ -13,8 +13,15 @@ body{margin:0;font:13px sans-serif;background:#fff;color:#333}
 <div id="old" hidden>Дані застаріли. Запитайте графік ще раз.</div></div>
 </div><script>
 // PURE-BEGIN: pure functions, no DOM and no clock; tests/test_widget.py runs them in node.
-const SLOT = 18e5, DAY = 864e5;
-function slotIndex(n, t, len) { const i = Math.floor((n - t * 1e3) / SLOT); return i < 0 || i >= len ? -1 : i; }
+const SLOT = 18e5, DAY = 864e5, H = 36e5;
+// Kyiv UTC offset in ms: EU rule, +3 from the last Sunday of March 01:00 UTC to the last Sunday of October 01:00 UTC, else +2.
+// ponytail: hard-coded EU DST rule; if Ukraine drops DST, send the offset in public_data instead.
+function lastSun(y, mo) { const d = Date.UTC(y, mo + 1, 0); return d - new Date(d).getUTCDay() * DAY + H; }
+function kyivOffset(n) { const y = new Date(n).getUTCFullYear(); return n >= lastSun(y, 2) && n < lastSun(y, 9) ? 3 * H : 2 * H; }
+// Wall clock: Kyiv local time written as UTC ms. Slots are wall-clock half hours, so DST days keep their labels.
+function wall(n) { return n + kyivOffset(n); }
+function wallMs(n, t) { return wall(n) - wall(t * 1e3); }
+function slotIndex(n, t, len) { const i = Math.floor(wallMs(n, t) / SLOT); return i < 0 || i >= len ? -1 : i; }
 function stateAt(s, i) { return i < 0 || i >= s.length ? 0 : +s[i]; }
 // Same rules as get_next_event_info(): "on" counts only directly after "off" or "possible".
 function nextChange(s, i) {
@@ -25,7 +32,8 @@ function nextChange(s, i) {
   }
   return -1;
 }
-function timeLeftMs(n, t, j) { return t * 1e3 + j * SLOT - n; }
+// Real ms until wall-clock slot j starts (the offset may change before it).
+function timeLeftMs(n, t, j) { const w = wall(t * 1e3) + j * SLOT, r = w - kyivOffset(n); return w - kyivOffset(r) - n; }
 function runLength(s, j) { let k = j; while (k < s.length && s[k] == s[j]) k++; return k - j; }
 function pad(x) { return (x < 10 ? '0' : '') + x; }
 function slotLabel(j) { const m = j % 48 * 30; return pad(m / 60 | 0) + ':' + pad(m % 60) + (j >= 48 && j < 96 ? ' завтра' : ''); }
@@ -79,7 +87,7 @@ function drawRing(m) {
     const p = P(i * 60 + 30, 80).split(',');
     h += '<text x="' + p[0] + '" y="' + (+p[1] + 4) + '" font-size="10" fill="#fff">' + pad(i) + '</text>';
   }
-  const cm = (m % 1440 + 1440) % 1440, e = P(cm, 105).split(','), day = new Date((D.t * 1e3) + Math.floor(m / 1440) * DAY + 432e5).toISOString();
+  const cm = (m % 1440 + 1440) % 1440, e = P(cm, 105).split(','), day = new Date(wall(D.t * 1e3) + Math.floor(m / 1440) * DAY).toISOString();
   h += line(cm, 55, 105, '#2196F3', 4) + '<circle cx="' + e[0] + '" cy="' + e[1] + '" r="4.5" fill="#2196F3" stroke="#fff" stroke-width="2"/>';
   h += line(0, 55, 105, '#fff', 4);
   h += '<text y="-8" font-size="18" fill="#333">' + String(D.q).replace(/[<&]/g, c => c == '<' ? '&lt;' : '&amp;') + '</text><text y="12" font-size="11" fill="#555">Прогноз (24 год)</text>';
@@ -91,8 +99,8 @@ function tick() {
   if (x !== raw) { raw = x; const d = parseData(x, D ? D.r || 0 : 0); if (d) { D = d; lastM = -1; } }
   if (!D) { $('st').textContent = NAMES[0]; return; }
   const n = Date.now(), i = slotIndex(n, D.t, D.s.length), c = stateAt(D.s, i);
-  const j = i < 0 ? -1 : nextChange(D.s, i), m = Math.floor((n - D.t * 1e3) / 6e4);
-  $('clk').textContent = formatLeft(((n - D.t * 1e3) % DAY + DAY) % DAY);
+  const j = i < 0 ? -1 : nextChange(D.s, i), w = wallMs(n, D.t), m = Math.floor(w / 6e4);
+  $('clk').textContent = formatLeft((w % DAY + DAY) % DAY);
   $('st').textContent = NAMES[c];
   $('st').style.color = COL[c];
   $('nx').textContent = j < 0 ? (i < 0 ? '' : 'Змін не заплановано') : 'Зміна о ' + slotLabel(j) + ', через ' + formatLeft(timeLeftMs(n, D.t, j));
