@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile, InputMediaPhoto
 from services.api_client import SvitloApiClient
 from database.db import add_or_update_user, get_user
-from services.widget import widget_fallback
+from services.widget import widget_fallback, is_preview
 from services.image_generator import convert_api_to_half_list
 from datetime import datetime
 from typing import List, Dict, Any
@@ -266,9 +266,10 @@ async def process_queue(message: Message, state: FSMContext):
     )
     
     # Кнопки вибору режиму
+    preview = is_preview(message.from_user.id)
     buttons = [
         [KeyboardButton(text="🕒 Коло (Доба)"), KeyboardButton(text="🔮 Коло (Прогноз)")],
-        [KeyboardButton(text="📝 Список"), KeyboardButton(text="⚡ Живий віджет")],
+        [KeyboardButton(text="📝 Список")] + ([KeyboardButton(text="⚡ Живий віджет")] if preview else []),
         [KeyboardButton(text="⬅️ Назад")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -279,8 +280,8 @@ async def process_queue(message: Message, state: FSMContext):
         "• **🕒 Коло (Доба)** — класичне кільце на сьогодні. (За замовчуванням)\n"
         "• **🔮 Коло (Прогноз)** — кільце на 24 години вперед (з урахуванням завтра).\n"
         "• **📝 Список** — текстовий перелік інтервалів відключень.\n"
-        "• **⚡ Живий віджет** — живий відлік до зміни просто в чаті (потрібна нова версія Telegram).\n\n"
-        "💡 Ви завжди зможете змінити це в меню 'Змінити налаштування'.",
+        + ("• **⚡ Живий віджет** — живий відлік до зміни просто в чаті (потрібна нова версія Telegram).\n" if preview else "")
+        + "\n💡 Ви завжди зможете змінити це в меню 'Змінити налаштування'.",
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -315,11 +316,12 @@ async def process_settings_choice(message: Message, state: FSMContext):
         await cmd_start(message, state)
     elif choice == "🎨 Змінити вигляд графіку":
         # ... (existing logic for display mode)
+        preview = is_preview(message.from_user.id)
         buttons = [
             [KeyboardButton(text="🕒 Коло (Доба)")],
             [KeyboardButton(text="🔮 Коло (Прогноз)")],
             [KeyboardButton(text="📝 Список")],
-            [KeyboardButton(text="⚡ Живий віджет")],
+            *([[KeyboardButton(text="⚡ Живий віджет")]] if preview else []),
             [KeyboardButton(text="⬅️ Назад")]
         ]
         keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -337,11 +339,10 @@ async def process_settings_choice(message: Message, state: FSMContext):
             "📝 **Список**\n"
             "• Текстові картки з інтервалами.\n"
             "• Тільки конкретний час відключень.\n"
-            "• Легко читати тривалість.\n\n"
-            "⚡ **Живий віджет**\n"
-            "• Відлік до зміни оновлюється щосекунди.\n"
-            "• Потрібна нова версія Telegram."
-        )
+            "• Легко читати тривалість."
+        ) + ("\n\n⚡ **Живий віджет**\n"
+             "• Відлік до зміни оновлюється щосекунди.\n"
+             "• Потрібна нова версія Telegram." if preview else "")
         await message.answer(description, reply_markup=keyboard, parse_mode="Markdown")
         await state.set_state(Registration.waiting_for_display_mode)
     elif choice == "🔔 Налаштувати нагадування":
@@ -403,7 +404,7 @@ async def process_display_mode(message: Message, state: FSMContext):
     }
     
     user_mode = message.text
-    if user_mode not in mode_map:
+    if user_mode not in mode_map or (mode_map[user_mode] == "widget" and not is_preview(message.from_user.id)):
         if user_mode == "📊 Поточний статус":
             await cmd_status(message, state)
         else:

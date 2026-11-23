@@ -128,10 +128,17 @@ async def notify_push(api_client):
             _LOGGER.warning("FCM push %s/%s failed: %s", r, q, exc)
 
 
-def page_url(region_id, queue_id):
-    """Public link to the browser version of the widget, or None when WEB_BASE_URL is not set."""
+def is_preview(tg_id) -> bool:
+    """The widget, its web page link and the Android app are shown only to PREVIEW_USERS (comma-separated ids)."""
+    return str(tg_id) in {x for x in os.getenv("PREVIEW_USERS", "").replace(" ", "").split(",") if x}
+
+
+def page_url(region_id, queue_id, tg_id=None):
+    """Link to the browser version of the widget; None when WEB_BASE_URL is not set or the user is not a preview user."""
     base = os.getenv("WEB_BASE_URL", "").rstrip("/")
-    return f"{base}/w?{urlencode({'r': region_id, 'q': queue_id})}" if base else None
+    if not base or (tg_id is not None and not is_preview(tg_id)):
+        return None
+    return f"{base}/w?{urlencode({'r': region_id, 'q': queue_id})}"
 
 
 async def start_web(api_client):
