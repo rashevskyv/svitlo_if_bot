@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="fg">#FF222222</color>
+    <color name="muted">#FF666666</color>
+</resources>

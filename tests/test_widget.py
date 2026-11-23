@@ -101,7 +101,9 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
         import aiohttp
         sched = {"date_today": "2026-11-23", "date_tomorrow": "2026-11-24", "schedule": {"2026-11-23": day([1] * 48)}}
         api = SimpleNamespace(fetch_schedule=AsyncMock(side_effect=lambda r, q: sched))
-        with patch.dict(os.environ, {"WEB_PORT": "0", "WEB_BASE_URL": "http://h:1/"}):
+        app_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(app_dir.cleanup)
+        with patch.dict(os.environ, {"WEB_PORT": "0", "WEB_BASE_URL": "http://h:1/", "APP_DIR": app_dir.name}):
             self.assertEqual(widget.page_url("ivano-frankivska-oblast", "5.2"), "http://h:1/w?r=ivano-frankivska-oblast&q=5.2")
             runner = await widget.start_web(api)
         base = "http://127.0.0.1:%d/w" % runner.addresses[0][1]
@@ -143,12 +145,19 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
             await db.init_db()
             sched = {"date_today": "2026-11-23", "date_tomorrow": "2026-11-24", "schedule": {"2026-11-23": day([1] * 48)}}
             api = SimpleNamespace(fetch_schedule=AsyncMock(side_effect=lambda r, q: sched))
-            with patch.dict(os.environ, {"WEB_PORT": "0"}):
+            app_dir = os.path.join(folder.name, "app")
+            with patch.dict(os.environ, {"WEB_PORT": "0", "APP_DIR": app_dir}):
                 runner = await widget.start_web(api)
+            Path(app_dir, "version.txt").write_text("2")
             try:
-                url = "http://127.0.0.1:%d/w/sub?r=ivano-frankivska-oblast&q=5.2" % runner.addresses[0][1]
-                async with aiohttp.ClientSession() as s, s.get(url) as r:
-                    self.assertEqual(await r.text(), widget.widget_data(sched, "5.2"))
+                base = "http://127.0.0.1:%d/w/" % runner.addresses[0][1]
+                async with aiohttp.ClientSession() as s:
+                    async with s.get(base + "sub?r=ivano-frankivska-oblast&q=5.2") as r:
+                        self.assertEqual(await r.text(), widget.widget_data(sched, "5.2"))
+                    async with s.get(base + "app/version.txt") as r:
+                        self.assertEqual(await r.text(), "2")
+                    async with s.get(base + "app/../../services/fcm.py") as r:
+                        self.assertEqual(r.status, 404)  # no way out of APP_DIR
             finally:
                 await runner.cleanup()
             from services import fcm

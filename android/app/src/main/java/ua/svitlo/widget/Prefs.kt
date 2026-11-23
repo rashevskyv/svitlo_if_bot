@@ -10,6 +10,8 @@ class Prefs(context: Context) {
     private val p = context.getSharedPreferences("svitlo", Context.MODE_PRIVATE)
     var link: String? get() = p.getString("link", null); set(v) = p.edit().putString("link", v).apply()
     var data: String? get() = p.getString("data", null); set(v) = p.edit().putString("data", v).apply()
+    var updateChecked: Long get() = p.getLong("updateChecked", 0); set(v) = p.edit().putLong("updateChecked", v).apply()
+    var latestVersion: Long get() = p.getLong("latestVersion", 0); set(v) = p.edit().putLong("latestVersion", v).apply()
 
     /** FCM topic for the queue in [link], e.g. q_ivano-frankivska-oblast_5.2 (the bot sends to the same name). */
     fun topic(): String? = link?.let { topicFor(it) }

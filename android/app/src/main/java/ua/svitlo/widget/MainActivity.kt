@@ -11,6 +11,12 @@ import com.google.firebase.messaging.FirebaseMessaging
 /** One screen: paste the "Живий графік у браузері" link from the bot, press the button, add the widget. */
 class MainActivity : Activity() {
     private lateinit var status: TextView
+    private lateinit var update: Button
+
+    private fun showUpdate() {
+        update.visibility = if (Updater.available(this)) android.view.View.VISIBLE else android.view.View.GONE
+        RingWidget.redraw(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -19,6 +25,10 @@ class MainActivity : Activity() {
         val input = EditText(this).apply { hint = "http://72.56.126.242:8080/w?r=…&q=…"; setText(intent?.dataString ?: prefs.link ?: "") }
         status = TextView(this)
         val save = Button(this).apply { text = "Зберегти"; setOnClickListener { save(input.text.toString().trim()) } }
+        update = Button(this).apply {
+            text = "⬆ Оновити застосунок"; visibility = android.view.View.GONE
+            setOnClickListener { status.text = Updater.install(this@MainActivity) }
+        }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, pad)
             addView(TextView(this@MainActivity).apply {
@@ -26,9 +36,16 @@ class MainActivity : Activity() {
                     "2. Вставте його сюди й натисніть «Зберегти».\n" +
                     "3. Додайте віджет «Світло» на головний екран."
             })
-            addView(input); addView(save); addView(status)
+            addView(input); addView(save); addView(status); addView(update)
         })
         status.text = if (prefs.data != null) "Збережено. Віджет оновлюється сам." else ""
+        prefs.link?.let { link ->
+            Thread {
+                val v = Updater.latest(link)
+                if (v > 0) prefs.latestVersion = v
+                runOnUiThread { showUpdate() }
+            }.start()
+        }
         if (intent?.dataString != null) save(intent.dataString!!)
     }
 

@@ -205,6 +205,10 @@ async def start_web(api_client):
     app = web.Application()
     app.add_routes([web.get("/w", page), web.get("/w/data", data), web.get("/w/events", events),
                     web.get("/w/sub", sub)])
+    # Android self-update: APP_DIR holds svitlo-widget.apk and version.txt (its versionCode).
+    app_dir = Path(os.getenv("APP_DIR", Path(__file__).resolve().parent.parent / "app"))
+    app_dir.mkdir(exist_ok=True)
+    app.router.add_static("/w/app/", app_dir)
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=1)  # open event streams must not delay a restart
     await runner.setup()
     port = int(os.getenv("WEB_PORT", "8080"))
