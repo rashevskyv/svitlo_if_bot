@@ -1,4 +1,5 @@
 """Live schedule widget (Bot API 10.4 sendWidget): one shared widget per (region, queue)."""
+import asyncio
 import hashlib
 import json
 import logging
@@ -94,6 +95,25 @@ async def send_widget_schedule(bot, tg_id, region_id, q, schedule_data, caption,
     return msg
 
 
+_SUBS = {}  # (region, queue) -> set of asyncio.Queue, one per open web page
+_MAX_PAGES = 500
+_PING = 30  # seconds; a closed page is noticed and dropped at the next ping
+
+
+async def notify_pages(api_client):
+    """Push fresh data to open web pages; each page drops the event when its data did not change."""
+    for (r, q), queues in list(_SUBS.items()):
+        try:
+            sd = await api_client.fetch_schedule(r, q)
+        except Exception as exc:  # one bad queue must not stop the update check
+            _LOGGER.warning("Page notify %s/%s failed: %s", r, q, exc)
+            continue
+        if sd:
+            d = widget_data(sd, q)
+            for queue in list(queues):
+                queue.put_nowait(d)
+
+
 def page_url(region_id, queue_id):
     """Public link to the browser version of the widget, or None when WEB_BASE_URL is not set."""
     base = os.getenv("WEB_BASE_URL", "").rstrip("/")
@@ -117,18 +137,46 @@ async def start_web(api_client):
     async def data(request):
         return web.Response(text=(await load(request))[0], content_type="application/json")
 
+    async def events(request):
+        """Server-Sent Events: current data at once, then only when the bot sees a change. Comments keep it alive."""
+        if sum(map(len, _SUBS.values())) >= _MAX_PAGES:
+            raise web.HTTPServiceUnavailable()
+        d, r, q = await load(request)
+        resp = web.StreamResponse(headers={"Content-Type": "text/event-stream", "Cache-Control": "no-store"})
+        await resp.prepare(request)
+        queue = asyncio.Queue()
+        _SUBS.setdefault((r, q), set()).add(queue)
+        last = None
+        try:
+            while True:
+                if d != last:
+                    await resp.write(f"data: {d}\n\n".encode())
+                    last = d
+                try:
+                    d = await asyncio.wait_for(queue.get(), _PING)
+                except asyncio.TimeoutError:
+                    await resp.write(b": ping\n\n")
+        except ConnectionResetError:
+            pass
+        finally:
+            subs = _SUBS.get((r, q), set())
+            subs.discard(queue)
+            if not subs:
+                _SUBS.pop((r, q), None)
+        return resp
+
     async def page(request):
         d, r, q = await load(request)
         shim = ("window.TelegramWidget={publicData:" + json.dumps(d).replace("<", "\\u003c") + "};"
-                "setInterval(()=>fetch('w/data?" + urlencode({"r": r, "q": q}) + "').then(x=>x.ok&&x.text())"
-                ".then(t=>{if(t)TelegramWidget.publicData=t}).catch(()=>{}),6e4);")
+                "new EventSource('w/events?" + urlencode({"r": r, "q": q}) + "').onmessage="
+                "e=>{TelegramWidget.publicData=e.data};")
         html = HTML.replace('<meta charset="utf-8">', '<meta charset="utf-8"><meta name="viewport" content="width=370">'
                             '<title>Світло: черга ' + q + '</title>', 1).replace("<script>", "<script>" + shim, 1)
         return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-store"})
 
     app = web.Application()
-    app.add_routes([web.get("/w", page), web.get("/w/data", data)])
-    runner = web.AppRunner(app, access_log=None)
+    app.add_routes([web.get("/w", page), web.get("/w/data", data), web.get("/w/events", events)])
+    runner = web.AppRunner(app, access_log=None, shutdown_timeout=1)  # open event streams must not delay a restart
     await runner.setup()
     port = int(os.getenv("WEB_PORT", "8080"))
     await web.TCPSite(runner, "0.0.0.0", port).start()

@@ -94,6 +94,46 @@ class PythonTests(unittest.TestCase):
         self.assertEqual(d["s"][:48], "".join(str(days[dates[0]].get(f"{h:02d}:{m:02d}", 0)) for h in range(24) for m in (0, 30)))
 
 
+class WebPageTests(unittest.IsolatedAsyncioTestCase):
+    async def test_page_and_push(self):
+        import asyncio
+        import time
+        import aiohttp
+        sched = {"date_today": "2026-11-23", "date_tomorrow": "2026-11-24", "schedule": {"2026-11-23": day([1] * 48)}}
+        api = SimpleNamespace(fetch_schedule=AsyncMock(side_effect=lambda r, q: sched))
+        with patch.dict(os.environ, {"WEB_PORT": "0", "WEB_BASE_URL": "http://h:1/"}):
+            self.assertEqual(widget.page_url("ivano-frankivska-oblast", "5.2"), "http://h:1/w?r=ivano-frankivska-oblast&q=5.2")
+            runner = await widget.start_web(api)
+        base = "http://127.0.0.1:%d/w" % runner.addresses[0][1]
+        qs = "?r=ivano-frankivska-oblast&q=5.2"
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(base + qs) as r:
+                    html = await r.text()
+                    self.assertEqual(r.status, 200)
+                    self.assertIn("new EventSource('w/events" + qs, html)
+                async with s.get(base + "?r=nope&q=5.2") as r:
+                    self.assertEqual(r.status, 404)
+                async with s.get(base + "/events" + qs) as r:
+                    read = lambda: asyncio.wait_for(r.content.readuntil(b"\n\n"), 5)
+                    self.assertEqual(await read(), b"data: " + widget.widget_data(sched, "5.2").encode() + b"\n\n")
+                    await widget.notify_pages(api)  # unchanged: nothing is sent
+                    sched["schedule"]["2026-11-23"] = day([2] * 48)
+                    await widget.notify_pages(api)  # changed: pushed
+                    self.assertEqual(await read(), b"data: " + widget.widget_data(sched, "5.2").encode() + b"\n\n")
+            with patch.object(widget, "_PING", 0.1):
+                await widget.notify_pages(api)  # wake the handler so it re-reads _PING
+                for _ in range(50):  # the closed page is dropped at its next ping
+                    if not widget._SUBS:
+                        break
+                    await asyncio.sleep(0.1)
+            self.assertEqual(widget._SUBS, {})
+        finally:
+            started = time.monotonic()
+            await asyncio.wait_for(runner.cleanup(), 5)
+            self.assertLess(time.monotonic() - started, 3)  # a restart is not held up
+
+
 class JsTests(unittest.TestCase):
     def test_pure_functions(self):
         s27 = "'" + "1" * 25 + "22" + "1" * 21 + "'"
