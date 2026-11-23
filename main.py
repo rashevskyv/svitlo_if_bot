@@ -15,6 +15,7 @@ from typing import Optional
 from database.db import init_db, get_all_users, update_user_hash
 from services.api_client import SvitloApiClient
 from services.utils import is_now_quiet_hours
+from services.widget import refresh_widgets
 from handlers.registration import send_schedule
 from handlers import registration
 
@@ -169,7 +170,11 @@ async def _check_updates():
     _LOGGER.info("Checking for updates...")
     await api_client._refresh_cache()
     changed_region_cpus = api_client.get_changed_regions(reset=True)
-    
+    try:
+        await refresh_widgets(bot, api_client)
+    except Exception as exc:  # widgets are opt-in; never block notifications
+        _LOGGER.warning("Widget refresh failed (%s)", exc)
+
     if not changed_region_cpus:
         _LOGGER.info("No regions changed, checking for catch-up updates.")
 

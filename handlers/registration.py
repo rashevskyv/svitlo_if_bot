@@ -267,17 +267,18 @@ async def process_queue(message: Message, state: FSMContext):
     # Кнопки вибору режиму
     buttons = [
         [KeyboardButton(text="🕒 Коло (Доба)"), KeyboardButton(text="🔮 Коло (Прогноз)")],
-        [KeyboardButton(text="📝 Список")],
+        [KeyboardButton(text="📝 Список"), KeyboardButton(text="⚡ Живий віджет")],
         [KeyboardButton(text="⬅️ Назад")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
-    
+
     await message.answer(
         f"✅ Область та черги збережено!\n\n"
         "Тепер оберіть **режим відображення** графіку:\n\n"
         "• **🕒 Коло (Доба)** — класичне кільце на сьогодні. (За замовчуванням)\n"
         "• **🔮 Коло (Прогноз)** — кільце на 24 години вперед (з урахуванням завтра).\n"
-        "• **📝 Список** — текстовий перелік інтервалів відключень.\n\n"
+        "• **📝 Список** — текстовий перелік інтервалів відключень.\n"
+        "• **⚡ Живий віджет** — живий відлік до зміни просто в чаті (потрібна нова версія Telegram).\n\n"
         "💡 Ви завжди зможете змінити це в меню 'Змінити налаштування'.",
         reply_markup=keyboard,
         parse_mode="Markdown"
@@ -317,6 +318,7 @@ async def process_settings_choice(message: Message, state: FSMContext):
             [KeyboardButton(text="🕒 Коло (Доба)")],
             [KeyboardButton(text="🔮 Коло (Прогноз)")],
             [KeyboardButton(text="📝 Список")],
+            [KeyboardButton(text="⚡ Живий віджет")],
             [KeyboardButton(text="⬅️ Назад")]
         ]
         keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -334,7 +336,10 @@ async def process_settings_choice(message: Message, state: FSMContext):
             "📝 **Список**\n"
             "• Текстові картки з інтервалами.\n"
             "• Тільки конкретний час відключень.\n"
-            "• Легко читати тривалість."
+            "• Легко читати тривалість.\n\n"
+            "⚡ **Живий віджет**\n"
+            "• Відлік до зміни оновлюється щосекунди.\n"
+            "• Потрібна нова версія Telegram."
         )
         await message.answer(description, reply_markup=keyboard, parse_mode="Markdown")
         await state.set_state(Registration.waiting_for_display_mode)
@@ -392,7 +397,8 @@ async def process_display_mode(message: Message, state: FSMContext):
     mode_map = {
         "🕒 Коло (Доба)": "classic",
         "🔮 Коло (Прогноз)": "dynamic",
-        "📝 Список": "list"
+        "📝 Список": "list",
+        "⚡ Живий віджет": "widget"
     }
     
     user_mode = message.text

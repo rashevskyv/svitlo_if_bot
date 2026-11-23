@@ -2,9 +2,11 @@ import logging
 import time
 from typing import Any
 from datetime import datetime
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BufferedInputFile, InputMediaPhoto
 from database.db import get_user
 from services.utils import escape_markdown
+from services.widget import send_widget_schedule
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +75,37 @@ async def _send_schedule(target: Any, tg_id: int, api_client, silent: bool = Fal
         all_schedules[q["id"]] = schedule_data["schedule"]
         sched_hash = hashlib.md5(json.dumps(schedule_data["schedule"], sort_keys=True).encode()).hexdigest()
 
+        # Формуємо текстовий прогноз
+        today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
+        tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
+        forecast_text = get_next_event_info(today_half, tomorrow_half, now_dt)
+
+        # Додаємо повідомлення про відсутність графіку на завтра
+        if is_schedule_empty(tomorrow_half):
+            forecast_text += "\n\n⚠️ **Графіку на завтра ще немає.**"
+
+        # Додаємо час запиту та статус сповіщень в підпис
+        timestamp_str = now_dt.strftime("%H:%M")
+
+        notif_status_str = ""
+        if not notif_enabled:
+            notif_status_str = "\n⚠️ **Сповіщення вимкнені**"
+        elif qh_start and qh_end:
+            mode_desc = "без звуку" if qh_silent else "пропускаються"
+            notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end} ({mode_desc})**"
+
+        caption = f"📍 **{escape_markdown(q['alias'])}**\n{forecast_text}{notif_status_str}\n\n🕒 _Запитано о {timestamp_str}_"
+
+        if mode == "widget":
+            try:
+                await _timed_send(send_widget_schedule(target.bot if hasattr(target, "bot") else target,
+                                                       tg_id, region_id, q, schedule_data, caption, silent), tg_id, q["id"])
+                continue
+            except (TelegramAPIError, AttributeError) as exc:  # AttributeError: aiogram < 3.34 has no send_widget
+                # Fall back to the classic image for this and the remaining queues of this request.
+                _LOGGER.warning("Widget send failed for user %s queue %s (%s); sending image", tg_id, q["id"], exc)
+                mode = "classic"
+
         # Спробуємо взяти з кешу (тільки для classic та list)
         cached_images = None
         if mode in ["classic", "list"]:
@@ -120,32 +153,11 @@ async def _send_schedule(target: Any, tg_id: int, api_client, silent: bool = Fal
             if mode in ["classic", "list"]:
                 img_cache.set(region_id, q["id"], mode, sched_hash, images_to_send)
 
-        # Формуємо текстовий прогноз
-        today_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_today"], {}))
-        tomorrow_half = convert_api_to_half_list(schedule_data["schedule"].get(schedule_data["date_tomorrow"], {}))
-        forecast_text = get_next_event_info(today_half, tomorrow_half, now_dt)
-
-        # Додаємо повідомлення про відсутність графіку на завтра
-        if is_schedule_empty(tomorrow_half):
-            forecast_text += "\n\n⚠️ **Графіку на завтра ще немає.**"
-
-        # Додаємо час запиту та статус сповіщень в підпис
-        timestamp_str = now_dt.strftime("%H:%M")
-
-        notif_status_str = ""
-        if not notif_enabled:
-            notif_status_str = "\n⚠️ **Сповіщення вимкнені**"
-        elif qh_start and qh_end:
-            mode_desc = "без звуку" if qh_silent else "пропускаються"
-            notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end} ({mode_desc})**"
-
         queue_media = []
         for i, img_buf in enumerate(images_to_send):
             photo = BufferedInputFile(img_buf.getvalue(), filename=f"schedule_{q['id']}_{i}.png")
             # Додаємо підпис тільки до першого фото кожної черги
-            alias = escape_markdown(q['alias'])
-            caption = f"📍 **{alias}**\n{forecast_text}{notif_status_str}\n\n🕒 _Запитано о {timestamp_str}_" if i == 0 else None
-            queue_media.append(InputMediaPhoto(media=photo, caption=caption, parse_mode="Markdown"))
+            queue_media.append(InputMediaPhoto(media=photo, caption=caption if i == 0 else None, parse_mode="Markdown"))
 
         if not queue_media:
             delivery_success = False

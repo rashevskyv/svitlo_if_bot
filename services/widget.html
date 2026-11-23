@@ -1,0 +1,77 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;font:14px sans-serif;background:#1c1c1e;color:#fff}
+#w{padding:10px 12px}
+.h{display:flex;justify-content:space-between;color:#ff6d00;font-weight:700}
+#st{font-size:20px;font-weight:700;margin:6px 0 2px}
+.m{color:#bbb;font-size:13px;margin:2px 0}
+.r{display:flex;height:12px;margin:2px 0 6px}
+.r i{flex:1}
+.r .n{outline:2px solid #fff;z-index:1}
+#old{background:#ff6d00;color:#000;padding:3px 6px;border-radius:4px;margin-top:4px}
+</style></head><body><div id="w">
+<div class="h"><span id="q">Черга</span><span id="clk"></span></div>
+<div id="st"></div><div class="m" id="nx"></div><div class="m" id="du"></div>
+<div id="bars"></div><div class="m" id="off"></div>
+<div id="old" hidden>Дані застаріли. Запитайте графік ще раз.</div>
+</div><script>
+// PURE-BEGIN: pure functions, no DOM and no clock; tests/test_widget.py runs them in node.
+const SLOT = 18e5, DAY = 864e5;
+function slotIndex(n, t, len) { const i = Math.floor((n - t * 1e3) / SLOT); return i < 0 || i >= len ? -1 : i; }
+function stateAt(s, i) { return i < 0 || i >= s.length ? 0 : +s[i]; }
+// Same rules as get_next_event_info(): "on" counts only directly after "off" or "possible".
+function nextChange(s, i) {
+  const c = s[i] || '0';
+  for (let k = i + 1; k < s.length; k++) {
+    const x = s[k];
+    if (x != c && x != '0' && !(x == '1' && s[k - 1] != '2' && s[k - 1] != '3')) return k;
+  }
+  return -1;
+}
+function timeLeftMs(n, t, j) { return t * 1e3 + j * SLOT - n; }
+function runLength(s, j) { let k = j; while (k < s.length && s[k] == s[j]) k++; return k - j; }
+function pad(x) { return (x < 10 ? '0' : '') + x; }
+function slotLabel(j) { const m = j % 48 * 30; return pad(m / 60 | 0) + ':' + pad(m % 60) + (j >= 48 && j < 96 ? ' завтра' : ''); }
+function formatLeft(ms) { const s = Math.max(0, Math.floor(ms / 1e3)); return (s / 3600 | 0) + ':' + pad((s / 60 | 0) % 60) + ':' + pad(s % 60); }
+function offHours(s, d) { const p = s.slice(d * 48, d * 48 + 48); return p.length < 48 ? null : (p.split('2').length - 1) / 2; }
+function isStale(n, t, len) { return slotIndex(n, t, len) < 0; }
+function parseData(x, r) {
+  try { const d = JSON.parse(x); return d && typeof d.s == 'string' && typeof d.t == 'number' && !((d.r || 0) < r) ? d : null; }
+  catch (e) { return null; }
+}
+// PURE-END
+const TW = window.TelegramWidget || {}, $ = id => document.getElementById(id);
+const NAMES = ['Немає даних', 'Світло є', 'Світла немає', 'Можливе відключення'];
+const COL = ['#9e9e9e', '#4caf50', '#d32f2f', '#81d4fa'];
+let D = null, raw, cells = [];
+function draw() {
+  let h = '', o = [];
+  for (let d = 0; d * 48 < D.s.length; d++) {
+    h += '<div class="m">' + (d ? 'Завтра' : 'Сьогодні') + '</div><div class="r">';
+    for (let k = d * 48; k < d * 48 + 48; k++) h += '<i style="background:' + COL[stateAt(D.s, k)] + '"></i>';
+    h += '</div>';
+    o.push((d ? 'завтра ' : 'сьогодні ') + offHours(D.s, d) + ' год');
+  }
+  $('bars').innerHTML = h;
+  cells = $('bars').getElementsByTagName('i');
+  $('off').textContent = 'Без світла: ' + o.join(', ');
+  $('q').textContent = 'Черга ' + D.q;
+}
+function tick() {
+  const x = TW.publicData;
+  if (x !== raw) { raw = x; const d = parseData(x, D ? D.r || 0 : 0); if (d) { D = d; draw(); } }
+  if (!D) { $('st').textContent = NAMES[0]; return; }
+  const n = Date.now(), i = slotIndex(n, D.t, D.s.length), c = stateAt(D.s, i);
+  const j = i < 0 ? -1 : nextChange(D.s, i);
+  $('clk').textContent = formatLeft(((n - D.t * 1e3) % DAY + DAY) % DAY);
+  $('st').textContent = NAMES[c];
+  $('st').style.color = COL[c];
+  $('nx').textContent = j < 0 ? (i < 0 ? '' : 'Змін не заплановано') : 'Зміна о ' + slotLabel(j) + ', через ' + formatLeft(timeLeftMs(n, D.t, j));
+  $('du').textContent = j < 0 ? '' : 'Далі: ' + NAMES[stateAt(D.s, j)] + ', ' + runLength(D.s, j) / 2 + ' год';
+  $('old').hidden = !isStale(n, D.t, D.s.length);
+  for (let k = 0; k < cells.length; k++) cells[k].className = k == i ? 'n' : '';
+}
+if (TW.onEvent) TW.onEvent('publicDataChanged', tick);
+if (TW.watchPublicData) TW.watchPublicData();
+tick();
+setInterval(tick, 1e3);
+</script></body></html>

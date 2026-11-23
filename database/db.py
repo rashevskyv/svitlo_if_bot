@@ -47,7 +47,37 @@ async def init_db():
                 await db.execute(migration)
             except aiosqlite.OperationalError:
                 pass # Колонка вже існує
-        
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS widgets (
+                region_id TEXT, queue_id TEXT, tpl_hash TEXT, widget_id TEXT, last_data TEXT,
+                PRIMARY KEY (region_id, queue_id, tpl_hash)
+            )
+        """)
+        await db.commit()
+
+_WIDGET_COLS = "region_id, queue_id, tpl_hash, widget_id, last_data"
+
+async def get_widget(region_id: str, queue_id: str, tpl_hash: str) -> Optional[Tuple]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(f"SELECT {_WIDGET_COLS} FROM widgets WHERE region_id = ? AND queue_id = ? AND tpl_hash = ?",
+                              (region_id, queue_id, tpl_hash)) as cursor:
+            return await cursor.fetchone()
+
+async def save_widget(region_id: str, queue_id: str, tpl_hash: str, widget_id: str, last_data: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(f"INSERT OR REPLACE INTO widgets ({_WIDGET_COLS}) VALUES (?, ?, ?, ?, ?)",
+                         (region_id, queue_id, tpl_hash, widget_id, last_data))
+        await db.commit()
+
+async def get_all_widgets() -> List[Tuple]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(f"SELECT {_WIDGET_COLS} FROM widgets") as cursor:
+            return await cursor.fetchall()
+
+async def delete_widget(widget_id: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM widgets WHERE widget_id = ?", (widget_id,))
         await db.commit()
 
 async def add_or_update_user(telegram_id: int, region_id: str, queue_data: List[Dict[str, str]]):
