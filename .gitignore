@@ -16,3 +16,13 @@ verify*.py
 check_*.py
 !tests/
 !tests/*.py
+
+# Android: Firebase secrets and build output
+android/app/google-services.json
+android/fcm-service-account.json
+fcm-service-account.json
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.apk

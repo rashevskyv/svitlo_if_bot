@@ -54,7 +54,24 @@ async def init_db():
                 PRIMARY KEY (region_id, queue_id, tpl_hash)
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS push_topics (
+                region_id TEXT, queue_id TEXT, last_data TEXT, PRIMARY KEY (region_id, queue_id)
+            )
+        """)
         await db.commit()
+
+async def save_push_topic(region_id: str, queue_id: str, last_data: str, replace: bool = True):
+    """replace=False only adds a new topic: a second phone must not reset the data the first one is waiting for."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(f"INSERT OR {'REPLACE' if replace else 'IGNORE'} INTO push_topics VALUES (?, ?, ?)",
+                         (region_id, queue_id, last_data))
+        await db.commit()
+
+async def get_push_topics() -> List[Tuple]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT region_id, queue_id, last_data FROM push_topics") as cursor:
+            return await cursor.fetchall()
 
 _WIDGET_COLS = "region_id, queue_id, tpl_hash, widget_id, last_data"
 

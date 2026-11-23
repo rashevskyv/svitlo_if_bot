@@ -114,6 +114,20 @@ async def notify_pages(api_client):
                 queue.put_nowait(d)
 
 
+async def notify_push(api_client):
+    """FCM push to Android widgets of every queue a phone asked for (/w/sub), only when the data changed."""
+    from database.db import get_push_topics, save_push_topic
+    from services import fcm
+    for r, q, last in await get_push_topics():
+        try:
+            sd = await api_client.fetch_schedule(r, q)
+            d = widget_data(sd, q) if sd else None
+            if d and d != last and await fcm.send(r, q, d):
+                await save_push_topic(r, q, d)
+        except Exception as exc:  # one bad queue must not stop the update check
+            _LOGGER.warning("FCM push %s/%s failed: %s", r, q, exc)
+
+
 def page_url(region_id, queue_id):
     """Public link to the browser version of the widget, or None when WEB_BASE_URL is not set."""
     base = os.getenv("WEB_BASE_URL", "").rstrip("/")
@@ -165,6 +179,13 @@ async def start_web(api_client):
                 _SUBS.pop((r, q), None)
         return resp
 
+    async def sub(request):
+        """The Android app registers its queue: from now on the bot pushes it by FCM. Returns the current data."""
+        from database.db import save_push_topic
+        d, r, q = await load(request)
+        await save_push_topic(r, q, d, replace=False)
+        return web.Response(text=d, content_type="application/json")
+
     async def page(request):
         d, r, q = await load(request)
         shim = ("window.TelegramWidget={publicData:" + json.dumps(d).replace("<", "\\u003c") + "};"
@@ -175,7 +196,8 @@ async def start_web(api_client):
         return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-store"})
 
     app = web.Application()
-    app.add_routes([web.get("/w", page), web.get("/w/data", data), web.get("/w/events", events)])
+    app.add_routes([web.get("/w", page), web.get("/w/data", data), web.get("/w/events", events),
+                    web.get("/w/sub", sub)])
     runner = web.AppRunner(app, access_log=None, shutdown_timeout=1)  # open event streams must not delay a restart
     await runner.setup()
     port = int(os.getenv("WEB_PORT", "8080"))

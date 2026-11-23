@@ -134,6 +134,62 @@ class WebPageTests(unittest.IsolatedAsyncioTestCase):
             self.assertLess(time.monotonic() - started, 3)  # a restart is not held up
 
 
+class PushTests(unittest.IsolatedAsyncioTestCase):
+    async def test_sub_and_fcm_push(self):
+        import aiohttp
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        with patch.object(db, "DB_PATH", os.path.join(folder.name, "p.db")):
+            await db.init_db()
+            sched = {"date_today": "2026-11-23", "date_tomorrow": "2026-11-24", "schedule": {"2026-11-23": day([1] * 48)}}
+            api = SimpleNamespace(fetch_schedule=AsyncMock(side_effect=lambda r, q: sched))
+            with patch.dict(os.environ, {"WEB_PORT": "0"}):
+                runner = await widget.start_web(api)
+            try:
+                url = "http://127.0.0.1:%d/w/sub?r=ivano-frankivska-oblast&q=5.2" % runner.addresses[0][1]
+                async with aiohttp.ClientSession() as s, s.get(url) as r:
+                    self.assertEqual(await r.text(), widget.widget_data(sched, "5.2"))
+            finally:
+                await runner.cleanup()
+            from services import fcm
+            self.assertEqual(fcm.topic("ivano-frankivska-oblast", "5.2"), "q_ivano-frankivska-oblast_5.2")
+            with patch.object(fcm, "send", AsyncMock(return_value=True)) as send:
+                await widget.notify_push(api)  # unchanged since /w/sub: nothing is sent
+                send.assert_not_called()
+                sched["schedule"]["2026-11-23"] = day([2] * 48)
+                await widget.notify_push(api)
+                await widget.notify_push(api)  # saved after the first send: sent once
+                send.assert_awaited_once_with("ivano-frankivska-oblast", "5.2", widget.widget_data(sched, "5.2"))
+
+    async def test_fcm_jwt(self):
+        """The signed JWT verifies with the service account's public key."""
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        from services import fcm
+        pk = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = pk.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                               serialization.NoEncryption()).decode()
+        key = {"client_email": "a@b", "private_key": pem, "token_uri": "https://t/token"}
+        seen = {}
+
+        class Resp:
+            status = 200
+            async def json(self): return {"access_token": "tok", "expires_in": 3600}
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): pass
+
+        def post(url, data):
+            seen.update(data)
+            return Resp()
+        with patch.dict(fcm._TOKEN, {"v": None, "exp": 0}):
+            self.assertEqual(await fcm._token(SimpleNamespace(post=post), key), "tok")
+        h, b, sig = seen["assertion"].split(".")
+        pad = lambda x: x + "=" * (-len(x) % 4)
+        import base64
+        pk.public_key().verify(base64.urlsafe_b64decode(pad(sig)), f"{h}.{b}".encode(), padding.PKCS1v15(), hashes.SHA256())
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(pad(b)))["aud"], "https://t/token")
+
+
 class JsTests(unittest.TestCase):
     def test_pure_functions(self):
         s27 = "'" + "1" * 25 + "22" + "1" * 21 + "'"
