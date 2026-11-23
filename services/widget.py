@@ -2,7 +2,10 @@
 import hashlib
 import json
 import logging
+import os
+import re
 import time
+from urllib.parse import urlencode
 from datetime import date, datetime, time as dtime
 from pathlib import Path
 
@@ -89,6 +92,48 @@ async def send_widget_schedule(bot, tg_id, region_id, q, schedule_data, caption,
     if widget and widget.id:
         await save_widget(region_id, q["id"], TPL_HASH, widget.id, data)
     return msg
+
+
+def page_url(region_id, queue_id):
+    """Public link to the browser version of the widget, or None when WEB_BASE_URL is not set."""
+    base = os.getenv("WEB_BASE_URL", "").rstrip("/")
+    return f"{base}/w?{urlencode({'r': region_id, 'q': queue_id})}" if base else None
+
+
+async def start_web(api_client):
+    """Serve the widget as a web page: /w?r=<region>&q=<queue>. The page re-reads /w/data every minute."""
+    from aiohttp import web
+    from services.api_client import REGIONS
+
+    async def load(request):
+        r, q = request.query.get("r", ""), request.query.get("q", "")
+        if r not in REGIONS or not re.fullmatch(r"[\w.\-]{1,20}", q):
+            raise web.HTTPNotFound()
+        sd = await api_client.fetch_schedule(r, q)
+        if not sd:
+            raise web.HTTPNotFound()
+        return widget_data(sd, q), r, q
+
+    async def data(request):
+        return web.Response(text=(await load(request))[0], content_type="application/json")
+
+    async def page(request):
+        d, r, q = await load(request)
+        shim = ("window.TelegramWidget={publicData:" + json.dumps(d).replace("<", "\\u003c") + "};"
+                "setInterval(()=>fetch('w/data?" + urlencode({"r": r, "q": q}) + "').then(x=>x.ok&&x.text())"
+                ".then(t=>{if(t)TelegramWidget.publicData=t}).catch(()=>{}),6e4);")
+        html = HTML.replace('<meta charset="utf-8">', '<meta charset="utf-8"><meta name="viewport" content="width=370">'
+                            '<title>Світло: черга ' + q + '</title>', 1).replace("<script>", "<script>" + shim, 1)
+        return web.Response(text=html, content_type="text/html", headers={"Cache-Control": "no-store"})
+
+    app = web.Application()
+    app.add_routes([web.get("/w", page), web.get("/w/data", data)])
+    runner = web.AppRunner(app, access_log=None)
+    await runner.setup()
+    port = int(os.getenv("WEB_PORT", "8080"))
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    _LOGGER.info("Widget web page on port %s", port)
+    return runner
 
 
 async def refresh_widgets(bot, api_client):

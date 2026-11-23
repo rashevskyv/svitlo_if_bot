@@ -6,7 +6,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputMediaPhoto
 from database.db import get_user
 from services.utils import escape_markdown
-from services.widget import send_widget_schedule, widget_fallback
+from services.widget import send_widget_schedule, widget_fallback, page_url
 from database.db import update_user_display_mode
 
 _LOGGER = logging.getLogger(__name__)
@@ -95,7 +95,9 @@ async def _send_schedule(target: Any, tg_id: int, api_client, silent: bool = Fal
             mode_desc = "без звуку" if qh_silent else "пропускаються"
             notif_status_str = f"\n🌙 Тихі години: **{qh_start}-{qh_end} ({mode_desc})**"
 
-        caption = f"📍 **{escape_markdown(q['alias'])}**\n{forecast_text}{notif_status_str}\n\n🕒 _Запитано о {timestamp_str}_"
+        url = page_url(region_id, q["id"])
+        live_link = f"\n🔗 [Живий графік у браузері]({url})" if url else ""
+        caption = f"📍 **{escape_markdown(q['alias'])}**\n{forecast_text}{notif_status_str}{live_link}\n\n🕒 _Запитано о {timestamp_str}_"
 
         if widget_fallback(mode):
             try:

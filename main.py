@@ -15,7 +15,7 @@ from typing import Optional
 from database.db import init_db, get_all_users, update_user_hash
 from services.api_client import SvitloApiClient
 from services.utils import is_now_quiet_hours
-from services.widget import refresh_widgets, widget_fallback
+from services.widget import refresh_widgets, widget_fallback, start_web
 from handlers.registration import send_schedule
 from handlers import registration
 
@@ -424,6 +424,12 @@ async def main():
                 _LOGGER.warning("Event loop delay %.2fs", delay)
             previous = now
 
+    web_runner = None
+    try:
+        web_runner = await start_web(api_client)
+    except Exception as exc:  # the web page is optional; the bot must start anyway
+        _LOGGER.error("Widget web page did not start: %s", exc)
+
     watchdog = asyncio.create_task(event_loop_watchdog())
     initial_check = asyncio.create_task(check_updates())
     _LOGGER.info("Starting bot polling...")
@@ -434,6 +440,8 @@ async def main():
         watchdog.cancel()
         scheduler.shutdown(wait=False)
         await asyncio.gather(initial_check, watchdog, return_exceptions=True)
+        if web_runner:
+            await web_runner.cleanup()
         await api_client.stop_refresh()
         await session.close()
         await bot.session.close()
