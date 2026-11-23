@@ -2,11 +2,12 @@ import logging
 import time
 from typing import Any
 from datetime import datetime
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputMediaPhoto
 from database.db import get_user
 from services.utils import escape_markdown
-from services.widget import send_widget_schedule
+from services.widget import send_widget_schedule, widget_fallback
+from database.db import update_user_display_mode
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -96,15 +97,21 @@ async def _send_schedule(target: Any, tg_id: int, api_client, silent: bool = Fal
 
         caption = f"📍 **{escape_markdown(q['alias'])}**\n{forecast_text}{notif_status_str}\n\n🕒 _Запитано о {timestamp_str}_"
 
-        if mode == "widget":
+        if widget_fallback(mode):
             try:
                 await _timed_send(send_widget_schedule(target.bot if hasattr(target, "bot") else target,
                                                        tg_id, region_id, q, schedule_data, caption, silent), tg_id, q["id"])
                 continue
-            except (TelegramAPIError, AttributeError) as exc:  # AttributeError: aiogram < 3.34 has no send_widget
-                # Fall back to the classic image for this and the remaining queues of this request.
+            except (TelegramBadRequest, AttributeError) as exc:  # AttributeError: aiogram < 3.34 has no send_widget
+                # Telegram refuses widgets: return the user to the image mode they had before, for good.
+                _LOGGER.warning("Widget refused for user %s queue %s (%s); reverting mode", tg_id, q["id"], exc)
+                mode = widget_fallback(mode)
+                await update_user_display_mode(tg_id, mode)
+                caption += "\n\n⚠️ _Живий віджет поки недоступний. Повернуто попередній режим._"
+            except TelegramAPIError as exc:
+                # Transient error (network, 5xx, flood wait): send the image this time, keep widget mode.
                 _LOGGER.warning("Widget send failed for user %s queue %s (%s); sending image", tg_id, q["id"], exc)
-                mode = "classic"
+                mode = widget_fallback(mode)
 
         # Спробуємо взяти з кешу (тільки для classic та list)
         cached_images = None

@@ -10,6 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile, InputMediaPhoto
 from services.api_client import SvitloApiClient
 from database.db import add_or_update_user, get_user
+from services.widget import widget_fallback
 from services.image_generator import convert_api_to_half_list
 from datetime import datetime
 from typing import List, Dict, Any
@@ -411,6 +412,11 @@ async def process_display_mode(message: Message, state: FSMContext):
         
     db_mode = mode_map[user_mode]
     from database.db import update_user_display_mode
+    if db_mode == "widget":
+        # Remember the current image mode: the bot returns to it if Telegram refuses the widget.
+        user = await get_user(message.from_user.id)
+        prev = user[4] if user else None
+        db_mode = "widget:" + (widget_fallback(prev) or (prev if prev in ("classic", "list") else "dynamic"))
     await update_user_display_mode(message.from_user.id, db_mode)
     
     if is_reg:

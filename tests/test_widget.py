@@ -61,6 +61,12 @@ class PythonTests(unittest.TestCase):
         long = widget.build_widget_data(today, day([2] * 48), T, "ї" * 5000, rev=2**40)
         self.assertLessEqual(len(long.encode()), 1024)
 
+    def test_widget_fallback(self):
+        f = widget.widget_fallback
+        self.assertEqual([f("widget:classic"), f("widget:list"), f("widget"), f("widget:junk")],
+                         ["classic", "list", "dynamic", "dynamic"])
+        self.assertEqual([f("classic"), f("dynamic"), f(None)], [None, None, None])
+
     def test_kyiv_midnight_ts(self):
         t = widget.kyiv_midnight_ts("2026-11-23")
         self.assertEqual(datetime.fromtimestamp(t), datetime(2026, 11, 23))
@@ -113,6 +119,16 @@ class JsTests(unittest.TestCase):
             ("parseData('{\"r\":5,\"t\":1,\"s\":\"1\"}',6)", None),
             ("parseData('{\"r\":5,\"t\":1,\"s\":\"1\"}',5).s", "1"),
             ("parseData('{\"t\":1,\"s\":\"1\"}',0).t", 1),
+            # "Коло (Прогноз)": before the hand = tomorrow, after = today; hand splits its slot (21:45 = 1305).
+            (f"faceArcs('{'1' * 48 + '2' * 48}',1305)", [[0, 1305, "2"], [1305, 1440, "1"]]),
+            (f"faceArcs('{'1' * 48}',1305)", [[0, 1305, "0"], [1305, 1440, "1"]]),
+            (f"faceArcs('{'1' * 48 + '2' * 48}',0)", [[0, 1440, "1"]]),
+            # After midnight the old data: day 1 becomes "today", day 2 is unknown.
+            (f"faceArcs('{'1' * 48 + '2' * 48}',1470)", [[0, 30, "0"], [30, 1440, "2"]]),
+            (f"overlayArcs('{'1' * 48 + '2' * 48}',1305)", [[1305, 1440, "2"]]),
+            (f"overlayArcs('{'2' * 48 + '1' * 48}',1305)", [[1305, 1440, "1"]]),
+            (f"overlayArcs('{'1' * 48 + '1' * 48}',1305)", []),
+            (f"overlayArcs('{'1' * 48}',1305)", []),
         ]
         results = run_js([c[0] for c in cases])
         for (expr, expected), got in zip(cases, results):

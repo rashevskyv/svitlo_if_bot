@@ -15,7 +15,7 @@ from typing import Optional
 from database.db import init_db, get_all_users, update_user_hash
 from services.api_client import SvitloApiClient
 from services.utils import is_now_quiet_hours
-from services.widget import refresh_widgets
+from services.widget import refresh_widgets, widget_fallback
 from handlers.registration import send_schedule
 from handlers import registration
 
@@ -328,7 +328,7 @@ async def _check_updates():
                         is_relevant = True
                         break
                         
-                    if new_s and is_change_relevant(old_s, new_s, mode, now_dt, last_update_dt):
+                    if new_s and is_change_relevant(old_s, new_s, widget_fallback(mode) or mode, now_dt, last_update_dt):
                         is_relevant = True
                         break
                     else:

@@ -15,6 +15,14 @@ TPL_HASH = hashlib.md5(HTML.encode()).hexdigest()[:12]
 _CODES = {1: "1", 2: "2", 3: "3"}  # API codes: 1 on, 2 off, 3 possible, anything else unknown (0)
 
 
+def widget_fallback(mode):
+    """display_mode "widget:<prev>" -> prev image mode ("dynamic" by default); None if not a widget mode."""
+    if not (mode or "").startswith("widget"):
+        return None
+    prev = mode.partition(":")[2]
+    return prev if prev in ("classic", "dynamic", "list") else "dynamic"
+
+
 def _digits(day: dict) -> str:
     return "".join(_CODES.get(day.get(f"{h:02d}:{m:02d}", 0), "0") for h in range(24) for m in (0, 30))
 
@@ -77,8 +85,9 @@ async def send_widget_schedule(bot, tg_id, region_id, q, schedule_data, caption,
                                 public_data=widget_data(schedule_data, q["id"], int(time.time())),
                                 is_shared=True, caption=caption, parse_mode="Markdown",
                                 disable_notification=silent)
-    if msg.widget and msg.widget.id:
-        await save_widget(region_id, q["id"], TPL_HASH, msg.widget.id, data)
+    widget = getattr(msg, "widget", None)
+    if widget and widget.id:
+        await save_widget(region_id, q["id"], TPL_HASH, widget.id, data)
     return msg
 
 

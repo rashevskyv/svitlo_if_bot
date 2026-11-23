@@ -1,18 +1,16 @@
 <!doctype html><html><head><meta charset="utf-8"><style>
-body{margin:0;font:14px sans-serif;background:#1c1c1e;color:#fff}
-#w{padding:10px 12px}
-.h{display:flex;justify-content:space-between;color:#ff6d00;font-weight:700}
-#st{font-size:20px;font-weight:700;margin:6px 0 2px}
-.m{color:#bbb;font-size:13px;margin:2px 0}
-.r{display:flex;height:12px;margin:2px 0 6px}
-.r i{flex:1}
-.r .n{outline:2px solid #fff;z-index:1}
-#old{background:#ff6d00;color:#000;padding:3px 6px;border-radius:4px;margin-top:4px}
+body{margin:0;font:13px sans-serif;background:#fff;color:#333}
+#w{display:flex;align-items:center;height:240px;background:#fff}
+#ring{width:236px;height:236px;flex:none}
+#t{padding:0 6px 0 2px}
+#clk{font-weight:700;color:#555}
+#st{font-size:16px;font-weight:700;margin:4px 0}
+.m{color:#555;margin:3px 0}
+#old{background:#ff6d00;color:#000;padding:2px 4px;border-radius:4px;margin-top:4px}
 </style></head><body><div id="w">
-<div class="h"><span id="q">Черга</span><span id="clk"></span></div>
-<div id="st"></div><div class="m" id="nx"></div><div class="m" id="du"></div>
-<div id="bars"></div><div class="m" id="off"></div>
-<div id="old" hidden>Дані застаріли. Запитайте графік ще раз.</div>
+<svg id="ring" viewBox="-115 -115 230 230" font-family="sans-serif" font-weight="700" text-anchor="middle"></svg>
+<div id="t"><div id="clk"></div><div id="st"></div><div class="m" id="nx"></div><div class="m" id="du"></div>
+<div id="old" hidden>Дані застаріли. Запитайте графік ще раз.</div></div>
 </div><script>
 // PURE-BEGIN: pure functions, no DOM and no clock; tests/test_widget.py runs them in node.
 const SLOT = 18e5, DAY = 864e5;
@@ -38,37 +36,69 @@ function parseData(x, r) {
   try { const d = JSON.parse(x); return d && typeof d.s == 'string' && typeof d.t == 'number' && !((d.r || 0) < r) ? d : null; }
   catch (e) { return null; }
 }
+// "Коло (Прогноз)" from image_generator._generate_circle_view(dynamic=True). m = minutes since day 0 midnight.
+// Clock face 00:00 at the top: before the hand it shows tomorrow, after the hand it shows today.
+// Returns merged arcs [fromMin, toMin, state] on the 0..1440 face.
+function merge(a) { const r = []; for (const x of a) { const p = r[r.length - 1]; if (p && p[1] == x[0] && p[2] == x[2]) p[1] = x[1]; else r.push(x); } return r; }
+function faceArcs(s, m) {
+  const d = Math.floor(m / 1440), cm = m - d * 1440, T = s.slice(d * 48, d * 48 + 48), N = s.slice(d * 48 + 48, d * 48 + 96), a = [];
+  for (let k = 0; k < 48; k++) {
+    const x = k * 30, y = x + 30, n = N[k] || '0', t = T[k] || '0';
+    if (y <= cm) a.push([x, y, n]); else if (x >= cm) a.push([x, y, t]); else a.push([x, cm, n], [cm, y, t]);
+  }
+  return merge(a);
+}
+// Outer thin arc after the hand: tomorrow's state where it differs (off/possible, or on where today is off/possible).
+function overlayArcs(s, m) {
+  const d = Math.floor(m / 1440), cm = m - d * 1440, T = s.slice(d * 48, d * 48 + 48), N = s.slice(d * 48 + 48, d * 48 + 96), a = [];
+  for (let k = 0; k < 48; k++) {
+    const x = Math.max(k * 30, cm), y = k * 30 + 30, n = N[k] || '0', t = T[k] || '0';
+    if (y > x && n != t && n != '0' && (n != '1' || t == '2' || t == '3')) a.push([x, y, n]);
+  }
+  return merge(a);
+}
 // PURE-END
 const TW = window.TelegramWidget || {}, $ = id => document.getElementById(id);
 const NAMES = ['Немає даних', 'Світло є', 'Світла немає', 'Можливе відключення'];
-const COL = ['#9e9e9e', '#4caf50', '#d32f2f', '#81d4fa'];
-let D = null, raw, cells = [];
-function draw() {
-  let h = '', o = [];
-  for (let d = 0; d * 48 < D.s.length; d++) {
-    h += '<div class="m">' + (d ? 'Завтра' : 'Сьогодні') + '</div><div class="r">';
-    for (let k = d * 48; k < d * 48 + 48; k++) h += '<i style="background:' + COL[stateAt(D.s, k)] + '"></i>';
-    h += '</div>';
-    o.push((d ? 'завтра ' : 'сьогодні ') + offHours(D.s, d) + ' год');
+const COL = ['#9E9E9E', '#4CAF50', '#D32F2F', '#81D4FA'];
+let D = null, raw, lastM = -1;
+const P = (x, r) => { const a = x / 720 * Math.PI; return (Math.sin(a) * r).toFixed(1) + ',' + (-Math.cos(a) * r).toFixed(1); };
+function arc(x, y, r1, r2, c) {
+  // Split long arcs: SVG drops an arc whose ends meet (a full 0..1440 ring).
+  if (y - x > 720) return arc(x, x + 720, r1, r2, c) + arc(x + 720, y, r1, r2, c);
+  return '<path fill="' + c + '" d="M' + P(x, r2) + 'A' + r2 + ' ' + r2 + ' 0 0 1 ' + P(y, r2) + 'L' + P(y, r1) + 'A' + r1 + ' ' + r1 + ' 0 0 0 ' + P(x, r1) + 'Z"/>';
+}
+const line = (x, r1, r2, c, w) => '<path d="M' + P(x, r1) + 'L' + P(x, r2) + '" stroke="' + c + '" stroke-width="' + w + '" stroke-linecap="round"/>';
+function drawRing(m) {
+  // Radii follow the image: ring 0.6..1.0, overlay 1.02..1.08, hand 0.55..1.05 (1.0 = 100).
+  let h = '';
+  for (const [x, y, c] of faceArcs(D.s, m)) h += arc(x, y, 60, 100, COL[c]);
+  for (const [x, y, c] of overlayArcs(D.s, m)) h += arc(x, y, 102, 108, COL[c]);
+  for (let i = 0; i < 24; i++) {
+    h += line(i * 60, 60, 100, '#fff', .8);
+    const p = P(i * 60 + 30, 80).split(',');
+    h += '<text x="' + p[0] + '" y="' + (+p[1] + 4) + '" font-size="10" fill="#fff">' + pad(i) + '</text>';
   }
-  $('bars').innerHTML = h;
-  cells = $('bars').getElementsByTagName('i');
-  $('off').textContent = 'Без світла: ' + o.join(', ');
-  $('q').textContent = 'Черга ' + D.q;
+  const cm = (m % 1440 + 1440) % 1440, e = P(cm, 105).split(','), day = new Date((D.t * 1e3) + Math.floor(m / 1440) * DAY + 432e5).toISOString();
+  h += line(cm, 55, 105, '#2196F3', 4) + '<circle cx="' + e[0] + '" cy="' + e[1] + '" r="4.5" fill="#2196F3" stroke="#fff" stroke-width="2"/>';
+  h += line(0, 55, 105, '#fff', 4);
+  h += '<text y="-8" font-size="18" fill="#333">' + String(D.q).replace(/[<&]/g, c => c == '<' ? '&lt;' : '&amp;') + '</text><text y="12" font-size="11" fill="#555">Прогноз (24 год)</text>';
+  h += '<text y="26" font-size="8" font-weight="400" fill="grey">' + day.slice(8, 10) + '.' + day.slice(5, 7) + '.' + day.slice(0, 4) + '</text>';
+  $('ring').innerHTML = h;
 }
 function tick() {
   const x = TW.publicData;
-  if (x !== raw) { raw = x; const d = parseData(x, D ? D.r || 0 : 0); if (d) { D = d; draw(); } }
+  if (x !== raw) { raw = x; const d = parseData(x, D ? D.r || 0 : 0); if (d) { D = d; lastM = -1; } }
   if (!D) { $('st').textContent = NAMES[0]; return; }
   const n = Date.now(), i = slotIndex(n, D.t, D.s.length), c = stateAt(D.s, i);
-  const j = i < 0 ? -1 : nextChange(D.s, i);
+  const j = i < 0 ? -1 : nextChange(D.s, i), m = Math.floor((n - D.t * 1e3) / 6e4);
   $('clk').textContent = formatLeft(((n - D.t * 1e3) % DAY + DAY) % DAY);
   $('st').textContent = NAMES[c];
   $('st').style.color = COL[c];
   $('nx').textContent = j < 0 ? (i < 0 ? '' : 'Змін не заплановано') : 'Зміна о ' + slotLabel(j) + ', через ' + formatLeft(timeLeftMs(n, D.t, j));
   $('du').textContent = j < 0 ? '' : 'Далі: ' + NAMES[stateAt(D.s, j)] + ', ' + runLength(D.s, j) / 2 + ' год';
   $('old').hidden = !isStale(n, D.t, D.s.length);
-  for (let k = 0; k < cells.length; k++) cells[k].className = k == i ? 'n' : '';
+  if (m !== lastM) { lastM = m; drawRing(m); }
 }
 if (TW.onEvent) TW.onEvent('publicDataChanged', tick);
 if (TW.watchPublicData) TW.watchPublicData();
