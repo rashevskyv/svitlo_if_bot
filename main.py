@@ -172,10 +172,12 @@ async def _warn_invalid_queues(tg_id, region_id, queues, user_schedules):
     if not await mark_push_sent(f"badq:{tg_id}:{region_id}:{','.join(missing)}", int(time.time())):
         return
     region_name = REGIONS.get(region_id, region_id)
-    text = (f"⚠️ Черги {', '.join(missing)} більше немає в графіку для «{region_name}». "
-            f"Тому бот не може надіслати вам графік.\n\n"
+    text = (f"⚠️ Ваша черга (група) {', '.join(missing)} не обслуговується або її немає "
+            f"в графіку для «{region_name}». Тому бот не може надіслати вам графік.\n\n"
+            f"Перевірте, чи правильно ви ввели дані: область і номер черги.\n"
             f"Черги, які є зараз: {', '.join(available)}.\n\n"
-            f"Дізнайтеся свою нову чергу на сайті вашого обленерго. Потім натисніть /start і виберіть її.")
+            f"Номер черги можна дізнатися на сайті вашого обленерго. "
+            f"Щоб ввести дані знову, натисніть /start.")
     try:
         await bot.send_message(tg_id, text)
         _LOGGER.info("Told user %s that queues %s are gone in %s", tg_id, missing, region_id)
