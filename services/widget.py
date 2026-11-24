@@ -14,7 +14,8 @@ from aiogram.exceptions import TelegramBadRequest
 
 _LOGGER = logging.getLogger(__name__)
 
-HTML = Path(__file__).with_name("widget.html").read_text(encoding="utf-8")
+# Comment lines are dropped before sending: Telegram allows 4096 bytes after zlib.
+HTML = re.sub(r"(?m)^[ \t]*//.*\n", "", Path(__file__).with_name("widget.html").read_text(encoding="utf-8"))
 TPL_HASH = hashlib.md5(HTML.encode()).hexdigest()[:12]
 _CODES = {1: "1", 2: "2", 3: "3"}  # API codes: 1 on, 2 off, 3 possible, anything else unknown (0)
 

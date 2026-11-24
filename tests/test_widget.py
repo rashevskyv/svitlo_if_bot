@@ -54,7 +54,7 @@ def day(codes):
 
 class PythonTests(unittest.TestCase):
     def test_template_size(self):
-        raw = HTML_PATH.read_bytes()
+        raw = widget.HTML.encode()  # what Telegram gets: comment lines removed
         self.assertLessEqual(len(raw), 32768)
         self.assertLessEqual(len(zlib.compress(raw, 9)), 3800)  # server limit 4096, keep a margin
 

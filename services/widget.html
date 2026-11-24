@@ -5,13 +5,21 @@ body{margin:0;font:12px sans-serif;color:var(--f)}
 #w{display:flex;align-items:center;height:240px}
 #ring{width:236px;height:236px;flex:none}
 #t{margin-left:2px;padding:6px 10px 6px 8px;border-left:4px solid #9E9E9E;background:var(--s);border-radius:0 10px 10px 0}
-#st{font-size:15px;font-weight:700}
-#cd{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0}
-.m{color:var(--m);fill:var(--m);margin:3px 0}
+#st{font-size:26px;line-height:1}
+#cd,#nt{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums}
+#cd{margin:2px 0}
+#du{font-size:18px;font-weight:700;margin-top:4px}
+.i{width:1.1em;height:1.1em;vertical-align:-.2em;margin-right:4px}
+.m{color:var(--m);fill:var(--m)}
 #old{background:#ff6d00;color:#000;padding:2px 4px;border-radius:4px;margin-top:4px}
 </style></head><body><div id="w">
 <svg id="ring" viewBox="-115 -115 230 230" font-family="sans-serif" font-weight="700" text-anchor="middle"></svg>
-<div id="t"><div id="st"></div><div id="cd"></div><div class="m" id="nx"></div><div class="m" id="du"></div>
+<svg width="0" height="0" style="position:absolute"><defs>
+<path id="b" d="M12 2a7 7 0 0 0-4 12.7V18h8v-3.3A7 7 0 0 0 12 2zM9 19.5h6V22H9z"/>
+</defs></svg>
+<div id="t"><div id="st"><svg class="i" viewBox="-1 -1 26 26"><use href="#b"/></svg></div><div id="cd"></div>
+<div id="nx"><span class="m" id="np"></span><span id="nt"></span><span class="m" id="nd"></span></div>
+<div id="du"><svg class="i" viewBox="-1 -1 26 26"><use href="#b"/></svg><span id="dt"></span></div>
 <div id="old" hidden>Дані застаріли. Запитайте графік ще раз.</div></div>
 </div><script>
 // PURE-BEGIN: pure functions, no DOM and no clock; tests/test_widget.py runs them in node.
@@ -97,17 +105,21 @@ function drawRing(m) {
   h += '<text y="26" font-size="8" font-weight="400" class="m">' + day.slice(8, 10) + '.' + day.slice(5, 7) + '.' + day.slice(0, 4) + '</text>';
   $('ring').innerHTML = h;
 }
+// The state is an icon, not text: lit (filled) bulb = power on, unlit (outline) bulb = off, possible or no data.
+function ico(id, c) { const s = $(id).firstChild.style; s.fill = c == 1 ? COL[c] : 'none'; s.stroke = COL[c]; s.strokeWidth = 1.8; $(id).title = NAMES[c]; }
 function tick() {
   const x = TW.publicData;
   if (x !== raw) { raw = x; const d = parseData(x, D ? D.r || 0 : 0); if (d) { D = d; lastM = -1; } }
-  if (!D) { $('st').textContent = NAMES[0]; return; }
+  if (!D) { ico('st', 0); return; }
   const n = Date.now(), i = slotIndex(n, D.t, D.s.length), c = stateAt(D.s, i);
-  const j = i < 0 ? -1 : nextChange(D.s, i), w = wallMs(n, D.t), m = Math.floor(w / 6e4);
-  $('st').textContent = NAMES[c];
+  const j = i < 0 ? -1 : nextChange(D.s, i), w = wallMs(n, D.t), m = Math.floor(w / 6e4), l = j < 0 ? '' : slotLabel(j);
+  ico('st', c);
   $('t').style.borderColor = COL[c];
   $('cd').textContent = j < 0 ? '' : formatLeft(timeLeftMs(n, D.t, j));
-  $('nx').textContent = j < 0 ? (i < 0 ? '' : 'Змін не заплановано') : 'до ' + slotLabel(j);
-  $('du').textContent = j < 0 ? '' : 'Далі: ' + NAMES[stateAt(D.s, j)] + ', ' + runLength(D.s, j) / 2 + ' год';
+  $('np').textContent = j < 0 ? (i < 0 ? '' : 'Змін не заплановано') : 'до ';
+  $('nt').textContent = l.slice(0, 5); $('nd').textContent = l.slice(5);
+  $('du').hidden = j < 0;
+  if (j >= 0) { ico('du', stateAt(D.s, j)); $('dt').textContent = String(runLength(D.s, j) / 2).replace('.', ',') + ' год'; }
   $('old').hidden = !isStale(n, D.t, D.s.length);
   if (m !== lastM) { lastM = m; drawRing(m); }
 }

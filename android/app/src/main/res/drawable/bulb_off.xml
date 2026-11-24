@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unlit bulb, outline only (power off, possible or no data). White, tinted by setColorFilter. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="26" android:viewportHeight="26">
+    <group android:translateX="1" android:translateY="1">
+        <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="1.8"
+            android:pathData="M12 2a7 7 0 0 0-4 12.7V18h8v-3.3A7 7 0 0 0 12 2zM9 19.5h6V22H9z" />
+    </group>
+</vector>

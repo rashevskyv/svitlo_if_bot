@@ -40,13 +40,12 @@
         android:paddingEnd="10dp"
         android:paddingBottom="6dp">
 
-        <TextView
+        <!-- The state is an icon, not text: lit bulb = on, unlit bulb = off, possible or no data. -->
+        <ImageView
             android:id="@+id/status"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:textColor="@color/fg"
-            android:textSize="15sp"
-            android:textStyle="bold" />
+            android:layout_width="26dp"
+            android:layout_height="26dp"
+            android:src="@drawable/bulb_off" />
 
         <Chronometer
             android:id="@+id/countdown"
@@ -66,13 +65,41 @@
             android:textColor="@color/muted"
             android:textSize="12sp" />
 
+        <!-- After the change: state icon + its duration ("3,5 год"). -->
+        <LinearLayout
+            android:id="@+id/afterRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <ImageView
+                android:id="@+id/afterIcon"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginEnd="4dp"
+                android:src="@drawable/bulb_off" />
+
+            <TextView
+                android:id="@+id/after"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/fg"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
         <TextView
-            android:id="@+id/after"
+            android:id="@+id/update"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="3dp"
+            android:text="⬆ Є оновлення — торкніться"
             android:textColor="@color/muted"
-            android:textSize="12sp" />
+            android:textSize="12sp"
+            android:visibility="gone" />
 
         <TextView
             android:id="@+id/old"
