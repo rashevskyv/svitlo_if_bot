@@ -51,17 +51,32 @@ async def _token(session, key) -> str:
     return _TOKEN["v"]
 
 
-async def send(region_id, queue_id, data: str) -> bool:
-    """Send {"d": data} to the queue topic. False when FCM is not configured."""
+class Unregistered(Exception):
+    """The phone token is no longer valid (app removed or data cleared)."""
+
+
+async def _post(message: dict) -> bool:
     key = _key()
     if not key:
         return False
-    msg = {"message": {"topic": topic(region_id, queue_id), "data": {"d": data},
-                       "android": {"priority": "high", "ttl": "86400s", "collapse_key": "schedule"}}}  # offline phone gets only the latest
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20)) as s:
         tok = await _token(s, key)
         async with s.post(f"https://fcm.googleapis.com/v1/projects/{key['project_id']}/messages:send",
-                          json=msg, headers={"Authorization": f"Bearer {tok}"}) as resp:
+                          json={"message": message}, headers={"Authorization": f"Bearer {tok}"}) as resp:
+            if resp.status == 404 or (resp.status == 400 and "registration token" in (t := await resp.text())):
+                raise Unregistered()
             if resp.status >= 400:
                 raise RuntimeError(f"FCM send {resp.status}: {(await resp.text())[:200]}")
     return True
+
+
+async def send(region_id, queue_id, data: str) -> bool:
+    """Send {"d": data} to the queue topic. False when FCM is not configured."""
+    return await _post({"topic": topic(region_id, queue_id), "data": {"d": data},
+                        "android": {"priority": "high", "ttl": "86400s", "collapse_key": "schedule"}})  # offline phone gets only the latest
+
+
+async def notify(token: str, title: str, body: str, ttl: int = 3600) -> bool:
+    """A notification for one phone. Data-only, so the app always shows it itself (also in the background)."""
+    return await _post({"token": token, "data": {"title": title, "body": body},
+                        "android": {"priority": "high", "ttl": f"{ttl}s"}})

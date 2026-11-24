@@ -411,6 +411,8 @@ async def main():
     
     from services.reminder_service import check_reminders
     scheduler.add_job(check_reminders, "interval", minutes=1, args=[bot, api_client])
+    from services.widget import notify_before  # Android "power off/on in N minutes" push
+    scheduler.add_job(notify_before, "interval", minutes=1, args=[api_client])
     
     # Feature Announcements at 12:00
     # scheduler.add_job(broadcast_announcements, "cron", hour=12, minute=0)

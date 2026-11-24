@@ -59,7 +59,40 @@ async def init_db():
                 region_id TEXT, queue_id TEXT, last_data TEXT, PRIMARY KEY (region_id, queue_id)
             )
         """)
+        # Android notification settings per phone (FCM token); minutes 0 = off.
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS push_prefs (
+                token TEXT PRIMARY KEY, region_id TEXT, queue_id TEXT, sched INTEGER, off_min INTEGER, on_min INTEGER
+            )
+        """)
+        # Notifications already sent (survives a restart, so nothing is sent twice); ts = event time, for cleanup.
+        await db.execute("CREATE TABLE IF NOT EXISTS push_sent (key TEXT PRIMARY KEY, ts INTEGER)")
         await db.commit()
+
+async def save_push_prefs(token, region_id, queue_id, sched, off_min, on_min):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR REPLACE INTO push_prefs VALUES (?, ?, ?, ?, ?, ?)",
+                         (token, region_id, queue_id, int(sched), int(off_min), int(on_min)))
+        await db.commit()
+
+async def get_push_prefs() -> List[Tuple]:
+    """(token, region_id, queue_id, sched, off_min, on_min) of every phone."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("SELECT * FROM push_prefs") as cursor:
+            return await cursor.fetchall()
+
+async def delete_push_prefs(token):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM push_prefs WHERE token = ?", (token,))
+        await db.commit()
+
+async def mark_push_sent(key: str, ts: int) -> bool:
+    """True only the first time for this key. Old keys (event over 2 days ago) are dropped."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM push_sent WHERE ts < ?", (ts - 2 * 86400,))
+        cur = await db.execute("INSERT OR IGNORE INTO push_sent VALUES (?, ?)", (key, ts))
+        await db.commit()
+        return cur.rowcount == 1
 
 async def save_push_topic(region_id: str, queue_id: str, last_data: str, replace: bool = True):
     """replace=False only adds a new topic: a second phone must not reset the data the first one is waiting for."""

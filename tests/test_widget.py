@@ -199,6 +199,67 @@ class PushTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(json.loads(base64.urlsafe_b64decode(pad(b)))["aud"], "https://t/token")
 
 
+class NotifyTests(unittest.IsolatedAsyncioTestCase):
+    """Android notifications: schedule change, "in N minutes", no duplicates."""
+    T = int(datetime(2026, 11, 23).timestamp())  # local midnight, as kyiv_midnight_ts() on the server
+
+    def d(self, s, t=None):
+        return json.dumps({"t": t or self.T, "q": "5.2", "s": s})
+
+    def test_schedule_changed(self):
+        today, tomorrow = "1" * 20 + "2" * 8 + "1" * 20, "2" * 4 + "1" * 44
+        self.assertFalse(widget.schedule_changed(self.d(today + tomorrow), self.d(tomorrow, self.T + 86400)))  # midnight roll
+        self.assertFalse(widget.schedule_changed(self.d(today), self.d("0" * 48, self.T + 86400)))  # new day still unknown
+        self.assertTrue(widget.schedule_changed(self.d(today), self.d(today + tomorrow)))  # tomorrow published
+        self.assertTrue(widget.schedule_changed(self.d(today), self.d("1" * 48)))  # outage cancelled
+        self.assertFalse(widget.schedule_changed(None, self.d(today)))  # first data: no notification
+
+    def test_events_cross_midnight(self):
+        s = "1" * 48 + "2" * 4 + "1" * 44
+        now = self.T + 23 * 3600 + 50 * 60  # 23:50
+        self.assertEqual(widget.events(self.d(s), now), [("off", self.T + 86400), ("on", self.T + 86400 + 2 * 3600)])
+        self.assertEqual(widget.events(self.d("1" * 48), now), [])
+
+    async def test_before_n_minutes_once(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        codes = [1] * 28 + [2] * 4 + [1] * 16  # off 14:00-16:00
+        sched = {"date_today": "2026-11-23", "date_tomorrow": "2026-11-24", "schedule": {"2026-11-23": day(codes)}}
+        api = SimpleNamespace(fetch_schedule=AsyncMock(return_value=sched))
+        off_at = self.T + 14 * 3600
+        from services import fcm
+        with patch.object(db, "DB_PATH", os.path.join(folder.name, "n.db")), \
+                patch.object(fcm, "notify", AsyncMock(return_value=True)) as notify:
+            await db.init_db()
+            await db.save_push_prefs("tok-" + "a" * 30, "r", "5.2", True, 15, 0)
+            await widget.notify_before(api, off_at - 15 * 60 - 1)  # 16 min left: too early
+            notify.assert_not_called()
+            await widget.notify_before(api, off_at - 15 * 60)  # exactly 15 min
+            await widget.notify_before(api, off_at - 10 * 60)  # later in the window: no repeat
+            await db.init_db()  # "restart": the sent mark is in the database
+            await widget.notify_before(api, off_at - 5 * 60)
+            notify.assert_awaited_once()
+            self.assertEqual(notify.await_args.args[1], "🔴 Вимкнення світла через 15 хв")
+            await widget.notify_before(api, 16 * 3600 + self.T - 60)  # power-on in 1 min, but on_min = 0
+            notify.assert_awaited_once()
+            # Schedule change: once per new schedule, never for the first data.
+            old = widget.widget_data(sched, "5.2")
+            sched["schedule"]["2026-11-23"] = day([1] * 48)
+            new = widget.widget_data(sched, "5.2")
+            await widget.notify_schedule_change("r", "5.2", None, old)
+            await widget.notify_schedule_change("r", "5.2", old, new)
+            await widget.notify_schedule_change("r", "5.2", old, new)
+            self.assertEqual(notify.await_count, 2)
+            self.assertEqual(notify.await_args.args[1], "📅 Графік оновлено")
+            # A dead token loses its settings.
+            notify.side_effect = fcm.Unregistered()
+            await widget.notify_before(api, off_at - 60)  # same event: already marked, nothing sent
+            sched["schedule"]["2026-11-23"] = day(codes)
+            await db.save_push_prefs("tok-" + "a" * 30, "r", "5.2", True, 0, 30)
+            await widget.notify_before(api, off_at + 2 * 3600 - 60)
+            self.assertEqual(await db.get_push_prefs(), [])
+
+
 class JsTests(unittest.TestCase):
     def test_pure_functions(self):
         s27 = "'" + "1" * 25 + "22" + "1" * 21 + "'"

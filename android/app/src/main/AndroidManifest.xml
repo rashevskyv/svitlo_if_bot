@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 13+: notifications need the user's yes (asked in MainActivity when one is switched on). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Self-update: the app downloads a newer APK from the bot and opens the system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 

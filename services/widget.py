@@ -3,11 +3,12 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import time
 from urllib.parse import urlencode
-from datetime import date, datetime, time as dtime
+from datetime import date, datetime, time as dtime, timedelta
 from pathlib import Path
 
 from aiogram.exceptions import TelegramBadRequest
@@ -124,9 +125,96 @@ async def notify_push(api_client):
             sd = await api_client.fetch_schedule(r, q)
             d = widget_data(sd, q) if sd else None
             if d and d != last and await fcm.send(r, q, d):
+                await notify_schedule_change(r, q, last, d)
                 await save_push_topic(r, q, d)
         except Exception as exc:  # one bad queue must not stop the update check
             _LOGGER.warning("FCM push %s/%s failed: %s", r, q, exc)
+
+
+def schedule_changed(old: str, new: str) -> bool:
+    """True when the known schedule really changed; the midnight roll of t alone is not a change."""
+    try:
+        a, b = json.loads(old), json.loads(new)
+    except (TypeError, ValueError):
+        return False  # first data for this queue: nothing to compare with
+    shift = round((b["t"] - a["t"]) / 86400) * 48  # whole days; DST days are 23/25 h
+    x, y = (a["s"][shift:] if shift >= 0 else "0" * -shift + a["s"]), b["s"]
+    n = max(len(x), len(y))
+    return x.ljust(n, "0") != y.ljust(n, "0")  # missing = unknown ("0")
+
+
+def events(d: str, now: float):
+    """[(kind, epoch)] of the first power-off start and the first power-on start after now.
+    Same rules as reminder_service: "possible" counts as off; "on" only directly after off/possible."""
+    data = json.loads(d)
+    s, base, out = data["s"], datetime.fromtimestamp(data["t"]), {}
+    for j, c in enumerate(s):
+        p = s[j - 1] if j else ""
+        kind = "off" if c in "23" and (j == 0 or p not in "23") else "on" if c == "1" and p in ("2", "3") else None
+        if kind and kind not in out:
+            ts = (base + timedelta(minutes=30 * j)).timestamp()  # wall-clock slot -> epoch, DST-safe
+            if ts > now:
+                out[kind] = ts
+    return sorted(((k, int(v)) for k, v in out.items()), key=lambda e: e[1])
+
+
+def _next_text(d, now):
+    ev = events(d, now)
+    if not ev:
+        return "Змін не заплановано."
+    k, ts = ev[0]
+    return f"Наступне {'вимкнення' if k == 'off' else 'увімкнення'} о {datetime.fromtimestamp(ts):%H:%M}."
+
+
+async def _notify(token, key, ts, title, body):
+    """Send once per key (dedup survives a restart); a dead token loses its settings."""
+    from database.db import mark_push_sent, delete_push_prefs
+    from services import fcm
+    # ponytail: marked before sending, so a network error loses this one notification instead of sending it twice.
+    if not await mark_push_sent(key, ts):
+        return
+    try:
+        await fcm.notify(token, title, body)
+    except fcm.Unregistered:
+        await delete_push_prefs(token)
+
+
+async def notify_before(api_client, now=None):
+    """Every minute: "power off / on in N minutes" for phones that asked for it (/w/prefs)."""
+    from database.db import get_push_prefs
+    now = now or time.time()
+    by_queue = {}
+    for p in await get_push_prefs():
+        if p[4] or p[5]:
+            by_queue.setdefault((p[1], p[2]), []).append(p)
+    for (r, q), prefs in by_queue.items():
+        try:
+            sd = await api_client.fetch_schedule(r, q)
+            if not sd:
+                continue
+            for kind, ts in events(widget_data(sd, q), now):
+                left = math.ceil((ts - now) / 60)
+                for token, *_, off_min, on_min in prefs:
+                    n = off_min if kind == "off" else on_min
+                    if n and left <= n:
+                        word = "Вимкнення" if kind == "off" else "Увімкнення"
+                        await _notify(token, f"{token}|{kind}|{ts}", ts,
+                                      f"{'🔴' if kind == 'off' else '🟢'} {word} світла через {left} хв",
+                                      f"Черга {q}: о {datetime.fromtimestamp(ts):%H:%M} за графіком.")
+        except Exception as exc:  # one bad queue must not stop the others
+            _LOGGER.warning("Push reminder %s/%s failed: %s", r, q, exc)
+
+
+async def notify_schedule_change(r, q, old, new):
+    """"Графік оновлено" for phones of this queue with the setting on."""
+    from database.db import get_push_prefs
+    if not schedule_changed(old, new):
+        return
+    h = hashlib.md5(new.encode()).hexdigest()[:12]
+    for token, pr, pq, sched, *_ in await get_push_prefs():
+        if sched and (pr, pq) == (r, q):
+            await _notify(token, f"{token}|sched|{h}", int(time.time()),
+                          "📅 Графік оновлено", f"Черга {q}. {_next_text(new, time.time())}")
 
 
 def is_preview(tg_id) -> bool:
@@ -251,6 +339,21 @@ async def start_web(api_client):
         await save_push_topic(r, q, d, replace=False)
         return web.Response(text=d, content_type="application/json")
 
+    async def prefs(request):
+        """The Android app saves its notification settings: token, sched=0/1, off/on = minutes before (0 = off)."""
+        from database.db import save_push_prefs
+        _, r, q = await load(request)
+        g = request.query.get
+        token = g("token", "")
+        try:
+            off, on = (max(0, min(int(g(k, "0")), 180)) for k in ("off", "on"))
+        except ValueError:
+            raise web.HTTPBadRequest()
+        if not re.fullmatch(r"[\w:\-]{20,400}", token):
+            raise web.HTTPBadRequest()
+        await save_push_prefs(token, r, q, g("sched") == "1", off, on)
+        return web.Response(text="ok")
+
     async def page(request):
         d, r, q = await load(request)
         shim = ("window.TelegramWidget={publicData:" + json.dumps(d).replace("<", "\\u003c") + "};"
@@ -262,7 +365,7 @@ async def start_web(api_client):
 
     app = web.Application()
     app.add_routes([web.get("/w", page), web.get("/w/data", data), web.get("/w/events", events),
-                    web.get("/w/sub", sub)])
+                    web.get("/w/sub", sub), web.get("/w/prefs", prefs)])
     # Android self-update: APP_DIR holds svitlo-widget.apk and version.txt (its versionCode).
     app_dir = Path(os.getenv("APP_DIR", Path(__file__).resolve().parent.parent / "app"))
     app_dir.mkdir(exist_ok=True)
