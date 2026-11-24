@@ -76,6 +76,13 @@ else:
     REGIONS = {"ivano-frankivska-oblast": "Івано-Франківська область"}
     API_REGION_MAP = {}
 
+# Проксі прибрав "dnipropetrovska-oblast": дані Дніпра тепер у dnipro-dnem та dnipro-cek.
+# Старі користувачі (region_id в БД) йдуть на dnipro-dnem; ЦЕК доступний як окремий регіон.
+API_REGION_MAP["dnipropetrovska-oblast"] = "dnipro-dnem"
+REGIONS.pop("dnipropetrovska-oblast", None)
+REGIONS["dnipro-dnem"] = "м. Дніпро (ДніпроЕнерго)"
+REGIONS["dnipro-cek"] = "м. Дніпро (ЦЕК)"
+
 IF_API_URL = "https://be-svitlo.oe.if.ua/schedule-by-queue"
 IF_QUEUES_URL = "https://be-svitlo.oe.if.ua/gpv-queue-list"
 IF_REGION_ID = "ivano-frankivska-oblast"
