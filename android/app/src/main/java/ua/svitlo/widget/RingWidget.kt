@@ -58,7 +58,7 @@ class RingWidget : AppWidgetProvider() {
             val v = RemoteViews(context.packageName, R.layout.widget)
             v.setOnClickPendingIntent(R.id.root, PendingIntent.getActivity(context, 0,
                 Intent(context, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
-            var nextRedraw = now.plusMinutes(10)
+            var nextRedraw = now.plusMinutes(5)
             v.setViewVisibility(R.id.countdown, View.GONE)
             v.setTextViewText(R.id.next, ""); v.setTextViewText(R.id.after, "")
             if (data == null) {
@@ -79,7 +79,10 @@ class RingWidget : AppWidgetProvider() {
                     val day = if (at.toLocalDate() != now.toLocalDate()) " завтра" else ""
                     v.setTextViewText(R.id.next, "до ${at.format(HM)}$day")
                     val left = at.toInstant().toEpochMilli() - System.currentTimeMillis()
-                    v.setChronometer(R.id.countdown, SystemClock.elapsedRealtime() + left, null, true)
+                    // Chronometer drops the hours under 1 h ("23:51" looks like a time of day): add "0:" as the web page does.
+                    v.setChronometer(R.id.countdown, SystemClock.elapsedRealtime() + left, if (left < 3600_000) "0:%s" else null, true)
+                    val hourLeft = at.minusHours(1).plusSeconds(1)
+                    if (hourLeft.isAfter(now) && hourLeft.isBefore(nextRedraw)) nextRedraw = hourLeft
                     v.setChronometerCountDown(R.id.countdown, true)
                     v.setViewVisibility(R.id.countdown, View.VISIBLE)
                     v.setTextViewText(R.id.after, "Далі: ${NAMES[data.stateAt(j)]}, ${data.runLength(j) / 2.0} год".replace(".0 ", " "))
@@ -89,7 +92,7 @@ class RingWidget : AppWidgetProvider() {
             if (Updater.available(context)) v.setTextViewText(R.id.after, "⬆ Є оновлення — торкніться")
             manager.updateAppWidget(ids, v)
             // Inexact alarm: no exact-alarm permission needed; a few minutes late is fine for the hand.
-            // ponytail: a light/dark switch shows in the ring centre at the next redraw (≤10 min), not at once.
+            // ponytail: a light/dark switch shows in the ring centre at the next redraw (≤5 min), not at once.
             val am = context.getSystemService(AlarmManager::class.java)
             am.set(AlarmManager.RTC, nextRedraw.toInstant().toEpochMilli(), PendingIntent.getBroadcast(context, 1,
                 Intent(context, RingWidget::class.java).setAction(ACTION_REDRAW), PendingIntent.FLAG_IMMUTABLE))
@@ -101,6 +104,8 @@ class RingWidget : AppWidgetProvider() {
             val c = Canvas(b)
             c.translate(px / 2f, px / 2f); c.scale(px / 230f, px / 230f)
             val p = Paint(Paint.ANTI_ALIAS_FLAG)
+            // Scrim disk under the centre text (same colours as res/values*/colors.xml "scrim").
+            p.color = if (night) 0xCC202124.toInt() else 0xD9FFFFFF.toInt(); c.drawCircle(0f, 0f, 60f, p)
             fun arc(x: Int, y: Int, r1: Float, r2: Float, color: Int) {
                 val r = (r1 + r2) / 2
                 p.style = Paint.Style.STROKE; p.strokeWidth = r2 - r1; p.strokeCap = Paint.Cap.BUTT; p.color = color
@@ -128,7 +133,7 @@ class RingWidget : AppWidgetProvider() {
             p.style = Paint.Style.FILL; c.drawCircle(ex, ey, 4.5f, p)
             p.style = Paint.Style.STROKE; p.strokeWidth = 2f; p.color = Color.WHITE; c.drawCircle(ex, ey, 4.5f, p)
             val fg = if (night) 0xFFEEEEEE.toInt() else 0xFF222222.toInt()
-            val muted = if (night) 0xFF999999.toInt() else 0xFF666666.toInt()
+            val muted = if (night) 0xFFAAAAAA.toInt() else 0xFF555555.toInt()
             text.color = fg; text.textSize = 18f; c.drawText(d.q, 0f, -8f, text)
             text.color = muted; text.textSize = 11f; c.drawText("Прогноз (24 год)", 0f, 12f, text)
             val day = java.time.Instant.ofEpochSecond(d.t).atZone(Schedule.KYIV).toLocalDate().plusDays(Math.floorDiv(m, 1440).toLong())

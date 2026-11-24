@@ -12,8 +12,8 @@ android {
         minSdk = 26
         targetSdk = 35
         // Raise versionCode for every APK put on the VPS: the app offers an update when the server has a higher one.
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

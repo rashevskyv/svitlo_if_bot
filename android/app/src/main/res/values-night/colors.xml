@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="fg">#FFEEEEEE</color>
-    <color name="muted">#FF999999</color>
+    <color name="muted">#FFAAAAAA</color>
+    <color name="scrim">#CC202124</color>
 </resources>

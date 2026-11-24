@@ -1,10 +1,10 @@
 <!doctype html><html><head><meta charset="utf-8"><style>
-:root{color-scheme:light dark;--f:#222;--m:#666}
-@media(prefers-color-scheme:dark){:root{--f:#eee;--m:#999}}
+:root{color-scheme:light dark;--f:#222;--m:#555;--s:rgba(255,255,255,.85)}
+@media(prefers-color-scheme:dark){:root{--f:#eee;--m:#aaa;--s:rgba(32,33,36,.8)}}
 body{margin:0;font:12px sans-serif;color:var(--f)}
 #w{display:flex;align-items:center;height:240px}
 #ring{width:236px;height:236px;flex:none}
-#t{margin-left:2px;padding:2px 2px 2px 6px;border-left:4px solid #9E9E9E}
+#t{margin-left:2px;padding:6px 10px 6px 8px;border-left:4px solid #9E9E9E;background:var(--s);border-radius:0 10px 10px 0}
 #st{font-size:15px;font-weight:700}
 #cd{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0}
 .m{color:var(--m);fill:var(--m);margin:3px 0}
@@ -90,7 +90,8 @@ function drawRing(m) {
     const p = P(i * 60 + 30, 80).split(',');
     g += '<text x="' + p[0] + '" y="' + (+p[1] + 4) + '" font-size="10" fill="#fff">' + pad(i) + '</text>';
   }
-  h += '</mask><g mask="url(#k)">' + g + '</g>';
+  // Scrim disk under the centre text so it reads on any wallpaper.
+  h += '</mask><circle r="60" style="fill:var(--s)"/><g mask="url(#k)">' + g + '</g>';
   const cm = (m % 1440 + 1440) % 1440, e = P(cm, 105).split(','), day = new Date(wall(D.t * 1e3) + Math.floor(m / 1440) * DAY).toISOString();
   h += line(cm, 55, 105, '#2196F3', 4) + '<circle cx="' + e[0] + '" cy="' + e[1] + '" r="4.5" fill="#2196F3" stroke="#fff" stroke-width="2"/>';
   h += '<text y="-8" font-size="18" fill="currentColor">' + String(D.q).replace(/[<&]/g, c => c == '<' ? '&lt;' : '&amp;') + '</text><text y="12" font-size="11" class="m">Прогноз (24 год)</text>';
