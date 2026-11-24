@@ -372,7 +372,7 @@ async def process_settings_choice(message: Message, state: FSMContext):
         await show_quiet_hours_menu(message, state)
     elif choice == ANDROID_BUTTON and is_preview(message.from_user.id):
         text, markup = android_guide()
-        await message.answer(text, reply_markup=markup, disable_web_page_preview=True)
+        await message.answer(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
     elif choice == "⬅️ Назад":
         await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
         await state.clear()

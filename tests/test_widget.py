@@ -286,7 +286,10 @@ class PreviewTests(unittest.TestCase):
     def test_android_guide_fits_one_message(self):
         with patch.dict(os.environ, {"WEB_BASE_URL": "http://h:1/"}):
             text, markup = widget.android_guide()
-        self.assertLessEqual(len(text), 4096)  # Telegram message limit
+        self.assertLessEqual(len(re.sub(r"<[^>]+>", "", text)), 4096)  # Telegram limit, counted after HTML parsing
+        for tag in ("b", "i", "code"):  # every HTML tag is closed, or Telegram rejects the message
+            self.assertEqual(text.count(f"<{tag}>"), text.count(f"</{tag}>"), tag)
+        self.assertNotRegex(re.sub(r"</?(b|i|code)>", "", text), r"[<>&]")  # no other HTML-special characters
         self.assertEqual(markup.inline_keyboard[0][0].url, "http://h:1/w/app/svitlo-widget.apk")
 
 
