@@ -4,4 +4,5 @@
     <color name="muted">#FF555555</color>
     <!-- Scrim under the text and the ring centre, so they read on any wallpaper (same as the "s" variable in widget.html). -->
     <color name="scrim">#D9FFFFFF</color>
+    <color name="icon_bg">#FF1D2733</color>
 </resources>
