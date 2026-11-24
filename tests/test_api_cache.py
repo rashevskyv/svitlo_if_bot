@@ -172,5 +172,13 @@ class OldSourceMergeTests(unittest.TestCase):
         self.assertEqual([r["cpu"] for r in fresh["regions"]], ["sumska-oblast"])
 
 
+class QueueIdsTests(unittest.TestCase):
+    def test_queue_ids_natural_order_and_skip_empty(self):
+        c = api_client.SvitloApiClient.__new__(api_client.SvitloApiClient)
+        c._cached_data = {"regions": [{"cpu": "kyiv", "schedule": {"10.1": {"d": {}}, "2.1": {"d": {}}, "1.1": {"d": {}}, "3.1": {}}}]}
+        self.assertEqual(c.get_queue_ids("kyiv"), ["1.1", "2.1", "10.1"])
+        self.assertEqual(c.get_queue_ids("nowhere"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

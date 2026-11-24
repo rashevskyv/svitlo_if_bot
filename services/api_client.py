@@ -472,6 +472,13 @@ class SvitloApiClient:
             self._pending_changes.clear()
         return changes
 
+    def get_queue_ids(self, region: str) -> list[str]:
+        """Черги з графіком у кеші для регіону, у природному порядку (1.1, 1.2, 2.1, ..., 10.1)."""
+        cpu = API_REGION_MAP.get(region, region)
+        region_obj = next((r for r in (self._cached_data or {}).get("regions", []) if r.get("cpu") == cpu), None)
+        queues = [q for q, days in ((region_obj or {}).get("schedule") or {}).items() if days]
+        return sorted(queues, key=lambda q: [int(p) if p.isdigit() else 0 for p in q.split(".")])
+
     async def get_regions(self) -> Dict[str, str]:
         """
         Повертає список регіонів, використовуючи REGIONS з const.py.

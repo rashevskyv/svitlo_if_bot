@@ -3,6 +3,7 @@ import logging
 import hashlib
 import json
 import os
+import time
 import aiohttp
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, F
@@ -157,6 +158,29 @@ async def check_updates():
         finally:
             _LOGGER.info("Full update check took %.3fs", asyncio.get_running_loop().time() - started)
 
+async def _warn_invalid_queues(tg_id, region_id, queues, user_schedules):
+    """Черги користувача немає в графіку, хоча регіон має графік: черга більше не існує.
+    Повідомляємо один раз на 2 доби (push_sent чистить старі ключі)."""
+    available = api_client.get_queue_ids(region_id)
+    missing = [q["id"] for q in queues if q["id"] not in user_schedules]
+    if not available or not missing:
+        return  # регіон без графіка — це збій джерела, а не помилка черги
+    from database.db import mark_push_sent
+    from services.api_client import REGIONS
+    if not await mark_push_sent(f"badq:{tg_id}:{region_id}:{','.join(missing)}", int(time.time())):
+        return
+    region_name = REGIONS.get(region_id, region_id)
+    text = (f"⚠️ Черги {', '.join(missing)} більше немає в графіку для «{region_name}». "
+            f"Тому бот не може надіслати вам графік.\n\n"
+            f"Черги, які є зараз: {', '.join(available)}.\n\n"
+            f"Дізнайтеся свою нову чергу на сайті вашого обленерго. Потім натисніть /start і виберіть її.")
+    try:
+        await bot.send_message(tg_id, text)
+        _LOGGER.info("Told user %s that queues %s are gone in %s", tg_id, missing, region_id)
+    except Exception as e:
+        _LOGGER.warning("Failed to send invalid-queue notice to %s: %s", tg_id, e)
+
+
 async def _check_updates():
     """
     Періодична перевірка оновлень розкладу.
@@ -303,6 +327,7 @@ async def _check_updates():
                 s_data = await api_client.fetch_schedule(region_id, q["id"])
                 if s_data:
                     user_schedules[q["id"]] = s_data["schedule"]
+            await _warn_invalid_queues(tg_id, region_id, queues, user_schedules)
             if not user_schedules: continue
             
             new_hash = hashlib.md5(json.dumps(user_schedules, sort_keys=True).encode()).hexdigest()
