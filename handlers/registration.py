@@ -10,7 +10,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, BufferedInputFile, InputMediaPhoto
 from services.api_client import SvitloApiClient
 from database.db import add_or_update_user, get_user
-from services.widget import widget_fallback, is_preview
+from services.widget import widget_fallback, is_preview, android_guide, ANDROID_BUTTON
 from services.image_generator import convert_api_to_half_list
 from datetime import datetime
 from typing import List, Dict, Any
@@ -302,6 +302,7 @@ async def cmd_settings(message: Message, state: FSMContext):
         [KeyboardButton(text="🎨 Змінити вигляд графіку")],
         [KeyboardButton(text="🔔 Налаштувати нагадування")],
         [KeyboardButton(text="🌙 Сповіщення та тихі години")],
+        *([[KeyboardButton(text=ANDROID_BUTTON)]] if is_preview(message.from_user.id) else []),
         [KeyboardButton(text="⬅️ Назад")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -369,6 +370,9 @@ async def process_settings_choice(message: Message, state: FSMContext):
         await state.set_state(Registration.waiting_for_reminder_time)
     elif choice == "🌙 Сповіщення та тихі години":
         await show_quiet_hours_menu(message, state)
+    elif choice == ANDROID_BUTTON and is_preview(message.from_user.id):
+        text, markup = android_guide()
+        await message.answer(text, reply_markup=markup, disable_web_page_preview=True)
     elif choice == "⬅️ Назад":
         await message.answer("Повертаємось до головного меню.", reply_markup=get_main_keyboard())
         await state.clear()

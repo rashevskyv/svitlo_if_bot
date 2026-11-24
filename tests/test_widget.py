@@ -283,6 +283,12 @@ class PreviewTests(unittest.TestCase):
         with patch.dict(os.environ, {"PREVIEW_USERS": ""}):
             self.assertFalse(widget.is_preview(""))  # empty setting: nobody
 
+    def test_android_guide_fits_one_message(self):
+        with patch.dict(os.environ, {"WEB_BASE_URL": "http://h:1/"}):
+            text, markup = widget.android_guide()
+        self.assertLessEqual(len(text), 4096)  # Telegram message limit
+        self.assertEqual(markup.inline_keyboard[0][0].url, "http://h:1/w/app/svitlo-widget.apk")
+
 
 def bad_request(text):
     return TelegramBadRequest(method=None, message=text)
