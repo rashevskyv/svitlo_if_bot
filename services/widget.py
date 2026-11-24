@@ -130,7 +130,7 @@ async def notify_push(api_client):
 
 
 def is_preview(tg_id) -> bool:
-    """The widget, its web page link and the Android app are shown only to PREVIEW_USERS (comma-separated ids)."""
+    """The Telegram live widget mode is shown only to PREVIEW_USERS (comma-separated ids); the web link and the Android app are for everyone."""
     return str(tg_id) in {x for x in os.getenv("PREVIEW_USERS", "").replace(" ", "").split(",") if x}
 
 
@@ -192,9 +192,9 @@ def android_guide():
 
 
 def page_url(region_id, queue_id, tg_id=None):
-    """Link to the browser version of the widget; None when WEB_BASE_URL is not set or the user is not a preview user."""
+    """Link to the browser version of the widget (also used by the Android app); None when WEB_BASE_URL is not set."""
     base = os.getenv("WEB_BASE_URL", "").rstrip("/")
-    if not base or (tg_id is not None and not is_preview(tg_id)):
+    if not base:
         return None
     return f"{base}/w?{urlencode({'r': region_id, 'q': queue_id})}"
 

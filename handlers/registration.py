@@ -302,7 +302,7 @@ async def cmd_settings(message: Message, state: FSMContext):
         [KeyboardButton(text="🎨 Змінити вигляд графіку")],
         [KeyboardButton(text="🔔 Налаштувати нагадування")],
         [KeyboardButton(text="🌙 Сповіщення та тихі години")],
-        *([[KeyboardButton(text=ANDROID_BUTTON)]] if is_preview(message.from_user.id) else []),
+        [KeyboardButton(text=ANDROID_BUTTON)],
         [KeyboardButton(text="⬅️ Назад")]
     ]
     keyboard = ReplyKeyboardMarkup(keyboard=buttons, resize_keyboard=True)
@@ -370,7 +370,7 @@ async def process_settings_choice(message: Message, state: FSMContext):
         await state.set_state(Registration.waiting_for_reminder_time)
     elif choice == "🌙 Сповіщення та тихі години":
         await show_quiet_hours_menu(message, state)
-    elif choice == ANDROID_BUTTON and is_preview(message.from_user.id):
+    elif choice == ANDROID_BUTTON:
         text, markup = android_guide()
         await message.answer(text, reply_markup=markup, parse_mode="HTML", disable_web_page_preview=True)
     elif choice == "⬅️ Назад":

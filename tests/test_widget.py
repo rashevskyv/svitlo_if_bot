@@ -274,12 +274,13 @@ class JsTests(unittest.TestCase):
 
 
 class PreviewTests(unittest.TestCase):
-    def test_only_preview_users_get_the_link(self):
+    def test_preview_users_and_link_for_everyone(self):
         with patch.dict(os.environ, {"WEB_BASE_URL": "http://h:1", "PREVIEW_USERS": "5, 252419732"}):
             self.assertTrue(widget.is_preview(252419732))
             self.assertFalse(widget.is_preview(7))
-            self.assertIsNone(widget.page_url("r", "1", 7))
-            self.assertEqual(widget.page_url("r", "1", 5), "http://h:1/w?r=r&q=1")
+            self.assertEqual(widget.page_url("r", "1", 7), "http://h:1/w?r=r&q=1")  # the link is open to everyone
+        with patch.dict(os.environ, {"WEB_BASE_URL": ""}):
+            self.assertIsNone(widget.page_url("r", "1", 5))
         with patch.dict(os.environ, {"PREVIEW_USERS": ""}):
             self.assertFalse(widget.is_preview(""))  # empty setting: nobody
 
