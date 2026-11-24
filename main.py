@@ -161,9 +161,11 @@ async def check_updates():
 async def _warn_invalid_queues(tg_id, region_id, queues, user_schedules):
     """Черги користувача немає в графіку, хоча регіон має графік: черга більше не існує.
     Повідомляємо один раз на 2 доби (push_sent чистить старі ключі)."""
-    available = api_client.get_queue_ids(region_id)
     missing = [q["id"] for q in queues if q["id"] not in user_schedules]
-    if not available or not missing:
+    if not missing:
+        return
+    available = api_client.get_queue_ids(region_id)
+    if not available:
         return  # регіон без графіка — це збій джерела, а не помилка черги
     from database.db import mark_push_sent
     from services.api_client import REGIONS
