@@ -153,5 +153,24 @@ class CacheTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(self.client._refresh_task)
 
 
+class OldSourceMergeTests(unittest.TestCase):
+    def test_old_only_regions_added_dtek_wins_and_fallback_keeps_old(self):
+        from services.old_source import merge_old_regions
+        cache = {"regions": [{"cpu": "kyiv", "schedule": {"1.1": "dtek"}}]}
+        old = {"regions": [{"cpu": "kyiv", "schedule": {"1.1": "old"}},
+                           {"cpu": "sumska-oblast", "schedule": {"1.1": "s"}},
+                           {"cpu": "hersonska-oblast", "schedule": None}]}
+        merge_old_regions(cache, old)
+        self.assertEqual([r["cpu"] for r in cache["regions"]], ["kyiv", "sumska-oblast"])
+        self.assertEqual(cache["regions"][0]["schedule"], {"1.1": "dtek"})
+        # 304 path: candidate already holds old regions; refresh replaces, not duplicates
+        merge_old_regions(cache, {"regions": [{"cpu": "sumska-oblast", "schedule": {"1.1": "s2"}}]})
+        self.assertEqual([r["schedule"] for r in cache["regions"]], [{"1.1": "dtek"}, {"1.1": "s2"}])
+        # old API down: keep old-only regions from prior data, never DTEK ones
+        fresh = {"regions": []}
+        merge_old_regions(fresh, None, prior_data=cache)
+        self.assertEqual([r["cpu"] for r in fresh["regions"]], ["sumska-oblast"])
+
+
 if __name__ == "__main__":
     unittest.main()

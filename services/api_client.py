@@ -374,6 +374,10 @@ class SvitloApiClient:
             if not candidate:
                 return []
 
+            # 1.1 Додаємо області, які є лише в старому API
+            from services.old_source import update_old_regions
+            await update_old_regions(self, candidate, prior_data)
+
             # 2. Окремо оновлюємо Івано-Франківськ
             if IF_REGION_ID in REGIONS:
                 await self._update_if_region_data(candidate)
