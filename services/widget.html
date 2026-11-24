@@ -90,7 +90,6 @@ function drawRing(m) {
     const p = P(i * 60 + 30, 80).split(',');
     g += '<text x="' + p[0] + '" y="' + (+p[1] + 4) + '" font-size="10" fill="#fff">' + pad(i) + '</text>';
   }
-  // Scrim disk under the centre text so it reads on any wallpaper.
   h += '</mask><circle r="60" style="fill:var(--s)"/><g mask="url(#k)">' + g + '</g>';
   const cm = (m % 1440 + 1440) % 1440, e = P(cm, 105).split(','), day = new Date(wall(D.t * 1e3) + Math.floor(m / 1440) * DAY).toISOString();
   h += line(cm, 55, 105, '#2196F3', 4) + '<circle cx="' + e[0] + '" cy="' + e[1] + '" r="4.5" fill="#2196F3" stroke="#fff" stroke-width="2"/>';
@@ -104,7 +103,6 @@ function tick() {
   if (!D) { $('st').textContent = NAMES[0]; return; }
   const n = Date.now(), i = slotIndex(n, D.t, D.s.length), c = stateAt(D.s, i);
   const j = i < 0 ? -1 : nextChange(D.s, i), w = wallMs(n, D.t), m = Math.floor(w / 6e4);
-  // The state name stays in the text colour (state colours are too pale for text); the bar carries the colour.
   $('st').textContent = NAMES[c];
   $('t').style.borderColor = COL[c];
   $('cd').textContent = j < 0 ? '' : formatLeft(timeLeftMs(n, D.t, j));
